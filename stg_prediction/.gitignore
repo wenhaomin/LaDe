@@ -1,0 +1,17 @@
+# Ignore compiled files
+*.class
+*.o
+*.pyc
+
+# Ignore log files
+logs/
+log/
+
+# Ignore temporary files
+tmp/
+
+data/
+
+results/
+
+run.sh
