@@ -79,5 +79,5 @@ If you find this helpful, please cite our paper:
       eprint={2306.10675},
       archivePrefix={arXiv},
       primaryClass={cs.DB}
-}
+} 
 ```
