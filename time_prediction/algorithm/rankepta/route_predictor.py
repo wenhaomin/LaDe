@@ -346,10 +346,6 @@ class Decoder(nn.Module):
         self.tanh_exploration = tanh_exploration
         self.decode_type = 'greedy'  # Needs to be set explicitly before use
 
-        # For geo prediciton
-        # self.geo_vocab_size = geo_vocab_size
-        # self.geo_pred = nn.Linear(hidden_dim, geo_vocab_size)
-
         self.lstm = nn.LSTMCell(embedding_dim, hidden_dim)
         self.pointer = Attention(hidden_dim, use_tanh=use_tanh, C=tanh_exploration)
         self.glimpse = Attention(hidden_dim, use_tanh=False)
@@ -533,7 +529,6 @@ class PointNet(nn.Module):
         self.hidden_size = args['hidden_size']
         self.sort_x_size = args['sort_x_size']
 
-        self.n_glimpses = 0
         self.sort_encoder = TransformerEncoder(node_dim=self.hidden_size, embed_dim=self.hidden_size,
                                                n_heads=8, n_layers=2,
                                                normalization='batch')
@@ -560,30 +555,6 @@ class PointNet(nn.Module):
                     torch.nn.init.zeros_(m.bias)
 
 
-    def get_seq_mask(self, max_seq_len, batch_size, sort_len):
-        """
-        Get the mask Tensor for sort task
-        """
-        range_tensor = torch.arange(max_seq_len, device=sort_len.device, dtype=sort_len.dtype).expand(batch_size,
-                                                                                                      max_seq_len,
-                                                                                                      max_seq_len)
-        each_len_tensor = sort_len.view(-1, 1, 1).expand(batch_size, max_seq_len, max_seq_len)
-        row_mask_tensor = (range_tensor < each_len_tensor)
-        col_mask_tensor = row_mask_tensor.transpose(1, 2)
-        mask_tensor = row_mask_tensor * col_mask_tensor
-        mask_tensor = mask_tensor.bool()
-        return mask_tensor
-
-    def get_init_mask(self, max_seq_len, batch_size, sort_len):
-        """
-        Get the init mask for decoder
-        """
-        range_tensor = torch.arange(max_seq_len, device=sort_len.device, dtype=sort_len.dtype).expand(batch_size, max_seq_len)
-        each_len_tensor = sort_len.view(-1, 1).expand(batch_size, max_seq_len)
-        raw_mask_tensor = range_tensor >= each_len_tensor
-        return raw_mask_tensor
-
-
     def enc_sort_emb(self, sort_emb, mask_index, batch_size, max_seq_len):
         """
         Encode the sort emb and paper the input for Decoder
@@ -596,20 +567,6 @@ class PointNet(nn.Module):
         inputs = sort_encoder_outputs.permute(1, 0, 2).contiguous()
         enc_h = sort_encoder_outputs.permute(1, 0, 2).contiguous()  #(seq_len, batch_size, hidden)
         return decoder_input, inputs, dec_init_state, enc_h
-
-
-    def get_pos(self, idx):
-        mask = idx < 0
-        max_len = idx.shape[1]
-        cols = []
-        for v in range(max_len):
-            col = torch.zeros_like(idx[:, 0])
-            x, y = torch.where(idx == v)
-            col[x] = y
-            cols.append(col)
-        pos = torch.stack(cols, dim=1)
-        pos = pos.masked_fill(mask, -1)
-        return pos
 
 
     def forward(self, V, V_reach_mask):
@@ -633,15 +590,15 @@ class PointNet(nn.Module):
 from utils.util import save2file_meta
 def save2file(params):
     from utils.util import ws
-    file_name = ws + f'/output/time_prediction/{params["model"]}.csv'
+    file_name = ws + f'/output/route_prediction/{params["dataset"]}/{params["model"]}.csv'
     # 写表头
     head = [
         # data setting
         'dataset', 'min_task_num', 'max_task_num', 'eval_min', 'eval_max',
         # mdoel parameters
-        'model', 'hidden_size', 'rl_ratio', 'trace_decay',
+        'model', 'hidden_size',
         # training set
-        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop',  'is_test', 'log_time',
+        'num_epoch', 'batch_size', 'lr',  'early_stop',  'is_test', 'log_time',
         'lsd', 'lmd', 'krc',  'hr@1', 'hr@2', 'hr@3',
         'ed','acc@1', 'acc@2', 'acc@3'
     ]
