@@ -21,14 +21,20 @@ def kendall_rank_correlation(pred, label, label_len):
     """
     caculate  kendall rank correlation (KRC), note that label set is a subset of pred set
     """
-    def is_concordant(i, j):
-        return 1 if (label_order[i] < label_order[j] and pred_order[i] < pred_order[j]) or (
-                label_order[i] > label_order[j] and pred_order[i] > pred_order[j]) else 0
 
-    if label_len == 1: return 1
+    def is_concordant(i, j):
+        return (
+            1
+            if (label_order[i] < label_order[j] and pred_order[i] < pred_order[j])
+            or (label_order[i] > label_order[j] and pred_order[i] > pred_order[j])
+            else 0
+        )
+
+    if label_len == 1:
+        return 1
 
     label = label[:label_len]
-    not_in_label = set(pred) - set(label)# 0
+    not_in_label = set(pred) - set(label)  # 0
     # get order dict
     pred_order = {d: idx for idx, d in enumerate(pred)}
     label_order = {d: idx for idx, d in enumerate(label)}
@@ -44,7 +50,7 @@ def kendall_rank_correlation(pred, label, label_len):
     try:
         hit_lst = [is_concordant(i, j) for i, j in (lst1 + lst2)]
     except:
-        print('[warning]: wrong in calculate KRC')
+        print("[warning]: wrong in calculate KRC")
         return float(1)
 
     hit = sum(hit_lst)
@@ -58,12 +64,17 @@ def _sigmoid(x):
     return s
 
 
-def idx_weight(i, mode='linear'):
-    if mode == 'linear': return 1 / (i + 1)
-    if mode == 'exp': return math.exp(-i)
-    if mode == 'sigmoid': return _sigmoid(5 - i)  # 5 means we focuse on the top 5
-    if mode == 'no_weight': return 1
-    if mode == 'log': return 1 / math.log(2 + i)  # i is start from 0
+def idx_weight(i, mode="linear"):
+    if mode == "linear":
+        return 1 / (i + 1)
+    if mode == "exp":
+        return math.exp(-i)
+    if mode == "sigmoid":
+        return _sigmoid(5 - i)  # 5 means we focuse on the top 5
+    if mode == "no_weight":
+        return 1
+    if mode == "log":
+        return 1 / math.log(2 + i)  # i is start from 0
 
 
 def route_acc(pred, label, top_n):
@@ -73,14 +84,17 @@ def route_acc(pred, label, top_n):
     assert set(label).issubset(set(pred)), f"error in prediction:{pred}, label:{label}"
     eval_num = min(top_n, len(label))
     pred = pred[:eval_num]
-    if not isinstance(pred, list): pred = pred.tolist()
-    if not isinstance(label, list): label = label.tolist()
-    for i in range(eval_num):# which means the sub route should be totally correct.
-        if not pred[i] == label[i]: return 0
+    if not isinstance(pred, list):
+        pred = pred.tolist()
+    if not isinstance(label, list):
+        label = label.tolist()
+    for i in range(eval_num):  # which means the sub route should be totally correct.
+        if not pred[i] == label[i]:
+            return 0
     return 1
 
 
-def location_deviation(pred, label, label_len, mode='square'):
+def location_deviation(pred, label, label_len, mode="square"):
     """
     calculate LSD / LMD
     mode:
@@ -101,10 +115,11 @@ def location_deviation(pred, label, label_len, mode='square'):
 
     # caculate the distance
     idx_diff = [math.fabs(i - j) for i, j in zip(idx_1, idx_2)]
-    weights = [idx_weight(idx, 'no_weight') for idx in idx_1]
+    weights = [idx_weight(idx, "no_weight") for idx in idx_1]
 
-    result = list(map(lambda x: x ** 2, idx_diff)) if mode == 'square' else idx_diff
+    result = list(map(lambda x: x**2, idx_diff)) if mode == "square" else idx_diff
     return sum([diff * w for diff, w in zip(result, weights)]) / n
+
 
 # https://blog.csdn.net/dcrmg/article/details/79228589
 # https://github.com/belambert/edit-distance
@@ -113,35 +128,48 @@ def edit_distance(pred, label):
     calculate edit distance (ED)
     """
     import edit_distance
+
     assert set(label).issubset(set(pred)), "error in prediction"
     # Focus on the items in the label
-    if not isinstance(pred, list): pred = pred.tolist()
-    if not isinstance(label, list): label = label.tolist()
+    if not isinstance(pred, list):
+        pred = pred.tolist()
+    if not isinstance(label, list):
+        label = label.tolist()
     try:
-         pred = [x for x in pred if x in label]
-         ed = edit_distance.SequenceMatcher(pred, label).distance()
+        pred = [x for x in pred if x in label]
+        ed = edit_distance.SequenceMatcher(pred, label).distance()
     except:
-           print('pred in function:', pred, f'type of pred: {type(pred)}')
-           print('label in function:', label, f'type label:{type(label)}')
+        print("pred in function:", pred, f"type of pred: {type(pred)}")
+        print("label in function:", label, f"type label:{type(label)}")
     return ed
 
+
 def calc_rmse(pred, label):
-    valid_pred = pred[:len(label)]
-    return np.sqrt(np.sum(((np.array(valid_pred) - np.array(label))**2/len(label))))
+    valid_pred = pred[: len(label)]
+    return np.sqrt(np.sum(((np.array(valid_pred) - np.array(label)) ** 2 / len(label))))
+
 
 def calc_mae(pred, label):
-    valid_pred = pred[:len(label)]
-    return np.sum(np.abs(np.array(valid_pred) - np.array(label)))/len(label)
+    valid_pred = pred[: len(label)]
+    return np.sum(np.abs(np.array(valid_pred) - np.array(label))) / len(label)
+
 
 def acc_eta(pred, label, top_n):
-    valid_pred = pred[:len(label)]
-    return len((np.abs(np.array(valid_pred) - np.array(label)) <= top_n).nonzero()[0]) /len(label)
+    valid_pred = pred[: len(label)]
+    return len(
+        (np.abs(np.array(valid_pred) - np.array(label)) <= top_n).nonzero()[0]
+    ) / len(label)
+
 
 def calc_mape(pred, label):
-    valid_pred = pred[:len(label)]
-    return np.sum(np.abs(np.array(valid_pred) - np.array(label))/np.array(label))/len(label)
+    valid_pred = pred[: len(label)]
+    return np.sum(
+        np.abs(np.array(valid_pred) - np.array(label)) / np.array(label)
+    ) / len(label)
+
 
 from typing import Dict
+
 
 class AverageMeter(object):
     """Computes and stores the average and current value"""
@@ -161,26 +189,26 @@ class AverageMeter(object):
         self.count += n
         self.avg = self.sum / self.count
 
+
 class Metric(object):
     def __init__(
-            self,
-            length_range,
-            max_seq_len = 25,
+        self,
+        length_range,
+        max_seq_len=25,
     ):
         self.max_seq_len = max_seq_len
-        self.hr = [AverageMeter() for _ in range(3)]
+        self.hr = [AverageMeter() for _ in range(self.max_seq_len)]
         self.lsd = AverageMeter()
         self.krc = AverageMeter()
         self.lmd = AverageMeter()
-        self.ed = AverageMeter() #edit distance
-        self.acc = [AverageMeter() for _ in [1, 2, 3, 4, 5, 6]]
+        self.ed = AverageMeter()  # edit distance
+        self.acc = [AverageMeter() for _ in range(self.max_seq_len)]
         self.mae = AverageMeter()
         self.rmse = AverageMeter()
         self.mape = AverageMeter()
         self.len_range = length_range
         self.acc_eta = [AverageMeter() for _ in [10, 20, 30, 40, 50, 60]]
         self.acc_eta_list = [10, 20, 30, 40, 50, 60]
-        self.max_hit = 3
 
     def filter_len(self, prediction, label, label_len):
         """
@@ -189,9 +217,8 @@ class Metric(object):
         pred_f = []
         label_f = []
         label_len_f = []
-        pred_len_f = []
         for i in range(len(label_len)):
-            if self.len_range[0] < label_len[i] <= self.len_range[1]:
+            if self.len_range[0] <= label_len[i] <= self.len_range[1]:
                 pred_f.append(prediction[i])
                 label_f.append(label[i])
                 label_len_f.append(label_len[i])
@@ -227,19 +254,20 @@ class Metric(object):
                 pred_f.append(prediction[i])
                 label_f.append(label[i])
                 label_len_f.append(label_len[i])
-                # input_len_f.append(input_len[i])
                 eta_pred_f.append(eta_pred[i])
                 eta_label_f.append(eta_label[i])
         return pred_f, label_f, label_len_f, eta_pred_f, eta_label_f
 
-    def update(self, label_len, prediction, label)->None:
+    def update(self, prediction, label, label_len) -> None:
         def tensor2lst(x):
             try:
                 return x.cpu().numpy().tolist()
             except:
                 return x
 
-        prediction, label, label_len = [tensor2lst(x) for x in [prediction, label, label_len]]
+        prediction, label, label_len = [
+            tensor2lst(x) for x in [prediction, label, label_len]
+        ]
 
         # process the prediction
         prediction, label, label_len = self.filter_len(prediction, label, label_len)
@@ -251,42 +279,74 @@ class Metric(object):
             pred.append(tmp)
 
         batch_size = len(pred)
-        if batch_size == 0:
-            pass
-        else:
 
-            for n in range(self.max_hit):
-                hr_n =  np.array([hit_rate(pre, lab, lab_len, n+1) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-                self.hr[n].update(hr_n, batch_size)
+        # Hit Rate
+        for n in range(self.max_seq_len):
+            hr_n = np.array(
+                [
+                    hit_rate(pre, lab, lab_len, n + 1)
+                    for pre, lab, lab_len in zip(pred, label, label_len)
+                ]
+            ).mean()
+            self.hr[n].update(hr_n, batch_size)
 
-            krc =  np.array([kendall_rank_correlation(pre, lab, lab_len) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-            self.krc.update(krc, batch_size)
+        krc = np.array(
+            [
+                kendall_rank_correlation(pre, lab, lab_len)
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
+        self.krc.update(krc, batch_size)
 
-            lsd = np.array([location_deviation(pre, lab, lab_len, 'square') for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-            self.lsd.update(lsd, batch_size)
+        lsd = np.array(
+            [
+                location_deviation(pre, lab, lab_len, "square")
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
+        self.lsd.update(lsd, batch_size)
 
-            lmd = np.array([location_deviation(pre, lab, lab_len, 'mean') for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-            self.lmd.update(lmd, batch_size)
+        lmd = np.array(
+            [
+                location_deviation(pre, lab, lab_len, "mean")
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
+        self.lmd.update(lmd, batch_size)
 
-            ed = np.array([edit_distance(pre, lab[:lab_len]) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-            self.ed.update(ed, batch_size)
+        ed = np.array(
+            [
+                edit_distance(pre, lab[:lab_len])
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
+        self.ed.update(ed, batch_size)
 
-            # ACC
-            for n in range(3):
-                acc_n = np.array([route_acc(pre, lab[:lab_len], n + 1) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
-                self.acc[n].update(acc_n, batch_size)
+        # ACC
+        for n in range(self.max_seq_len):
+            acc_n = np.array(
+                [
+                    route_acc(pre, lab[:lab_len], n + 1)
+                    for pre, lab, lab_len in zip(pred, label, label_len)
+                ]
+            ).mean()
+            self.acc[n].update(acc_n, batch_size)
 
-    def update_route_eta(self, prediction, label, label_len, eta_pred, eta_label) :
+    def update_route_eta(self, prediction, label, label_len, eta_pred, eta_label):
         def tensor2lst(x):
             try:
                 return x.cpu().numpy().tolist()
             except:
                 return x
 
-        prediction, label, label_len, eta_pred, eta_label = [tensor2lst(x) for x in [prediction, label, label_len, eta_pred, eta_label]]
+        prediction, label, label_len, eta_pred, eta_label = [
+            tensor2lst(x) for x in [prediction, label, label_len, eta_pred, eta_label]
+        ]
 
         # process the prediction
-        prediction, label, label_len, eta_pred, eta_label = self.route_eta_filter_len(prediction, label, label_len, eta_pred, eta_label)
+        prediction, label, label_len, eta_pred, eta_label = self.route_eta_filter_len(
+            prediction, label, label_len, eta_pred, eta_label
+        )
 
         pred = []
         for p in prediction:
@@ -296,44 +356,86 @@ class Metric(object):
 
         batch_size = len(pred)
 
-        for n in range(3):
+        for n in range(self.max_seq_len):
             hr_n = np.array(
-                [hit_rate(pre, lab, lab_len, n + 1) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
+                [
+                    hit_rate(pre, lab, lab_len, n + 1)
+                    for pre, lab, lab_len in zip(pred, label, label_len)
+                ]
+            ).mean()
             self.hr[n].update(hr_n, batch_size)
 
-        krc = np.array([kendall_rank_correlation(pre, lab, lab_len) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
+        krc = np.array(
+            [
+                kendall_rank_correlation(pre, lab, lab_len)
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
         self.krc.update(krc, batch_size)
 
-        lsd = np.array([location_deviation(pre, lab, lab_len, 'square') for pre, lab, lab_len in
-                        zip(pred, label, label_len)]).mean()
+        lsd = np.array(
+            [
+                location_deviation(pre, lab, lab_len, "square")
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
         self.lsd.update(lsd, batch_size)
 
-        lmd = np.array([location_deviation(pre, lab, lab_len, 'mean') for pre, lab, lab_len in
-                        zip(pred, label, label_len)]).mean()
+        lmd = np.array(
+            [
+                location_deviation(pre, lab, lab_len, "mean")
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
         self.lmd.update(lmd, batch_size)
 
         ed = np.array(
-            [edit_distance(pre, lab[:lab_len]) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
+            [
+                edit_distance(pre, lab[:lab_len])
+                for pre, lab, lab_len in zip(pred, label, label_len)
+            ]
+        ).mean()
         self.ed.update(ed, batch_size)
 
         # ACC
-        for n in range(len(self.acc_eta_list)):
+        for n in range(self.max_seq_len):
             acc_n = np.array(
-                [route_acc(pre, lab[:lab_len], n + 1) for pre, lab, lab_len in zip(pred, label, label_len)]).mean()
+                [
+                    route_acc(pre, lab[:lab_len], n + 1)
+                    for pre, lab, lab_len in zip(pred, label, label_len)
+                ]
+            ).mean()
             self.acc[n].update(acc_n, batch_size)
 
-        mae = np.array([calc_mae(pre, lab[:lab_len]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+        mae = np.sum(np.array([calc_mae(pre, lab[:lab_len]) for pre, lab, lab_len in
+                               zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
         self.mae.update(mae, batch_size)
-        rmse = np.array([calc_rmse(pre, lab[:lab_len]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+        rmse = np.sum(np.array([calc_rmse(pre, lab[:lab_len]) for pre, lab, lab_len in
+                                zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
         self.rmse.update(rmse, batch_size)
+        mape = np.sum(np.array([calc_mape(pre, lab[:lab_len]) for pre, lab, lab_len in
+                                zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
+        self.mape.update(mape, batch_size)
+
         for n in range(len(self.acc_eta_list)):
-            acc_eta_n = np.array([acc_eta(pre, lab[:lab_len], self.acc_eta_list[n]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+            acc_eta_n = np.sum(np.array([acc_eta(pre, lab[:lab_len], self.acc_eta_list[n]) for pre, lab, lab_len in
+                                         zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
             self.acc_eta[n].update(acc_eta_n, batch_size)
 
+        self.mae.update(mae, batch_size)
+        self.rmse.update(rmse, batch_size)
+
     def to_dict(self) -> Dict:
-        result = {f'hr@{i + 1}': self.hr[i].avg for i in range(3)}
-        result.update({f'acc@{i + 1}': self.acc[i].avg for i in range(3)})
-        result.update({'lsd': self.lsd.avg, 'lmd': self.lmd.avg, 'krc': self.krc.avg, 'ed': self.ed.avg})
+        result = {f"hr@{i + 1}": self.hr[i].avg for i in range(10)}
+        result.update({f"acc@{i + 1}": self.acc[i].avg for i in range(10)})
+        result.update(
+            {
+                "lsd": self.lsd.avg,
+                "lmd": self.lmd.avg,
+                "krc": self.krc.avg,
+                "ed": self.ed.avg,
+            }
+        )
         return result
 
     def to_str(self):
@@ -342,14 +444,26 @@ class Metric(object):
         krc = round(self.krc.avg, 3)
         lsd = round(self.lsd.avg, 3)
         ed = round(self.ed.avg, 3)
-        return f'krc:{krc} | lsd:{lsd} | ed:{ed} | hr@1:{hr[0]} | hr@2:{hr[1]} | hr@3:{hr[2]} | acc@1:{acc[0]} | acc@2:{acc[1]} | acc@3:{acc[2]} |'
+        return f"krc:{krc} | lsd:{lsd} | ed:{ed} | hr@1:{hr[0]} | hr@2:{hr[1]} | hr@3:{hr[2]} | acc@1:{acc[0]} | acc@2:{acc[1]} | acc@3:{acc[2]} |"
 
     def route_eta_to_dict(self) -> Dict:
-        result = {f'hr@{i + 1}': self.hr[i].avg for i in range(3)}
-        result.update({f'acc@{i + 1}': self.acc[i].avg for i in range(3)})
-        result.update({'lsd': self.lsd.avg, 'lmd': self.lmd.avg, 'krc': self.krc.avg, 'ed': self.ed.avg})
-        result.update({'rmse': self.rmse.avg, 'mae': self.mae.avg})
-        result.update({f'acc_eta@{(i+1)*10}': self.acc_eta[i].avg for i in range(len(self.acc_eta_list))})
+        result = {f"hr@{i + 1}": self.hr[i].avg for i in range(10)}
+        result.update({f"acc@{i + 1}": self.acc[i].avg for i in range(10)})
+        result.update(
+            {
+                "lsd": self.lsd.avg,
+                "lmd": self.lmd.avg,
+                "krc": self.krc.avg,
+                "ed": self.ed.avg,
+            }
+        )
+        result.update({"rmse": self.rmse.avg, "mae": self.mae.avg})
+        result.update(
+            {
+                f"acc_eta@{(i+1)*10}": self.acc_eta[i].avg
+                for i in range(len(self.acc_eta_list))
+            }
+        )
         return result
 
     def route_eta_to_str(self):
@@ -361,7 +475,7 @@ class Metric(object):
         rmse = round(self.rmse.avg, 3)
         mae = round(self.mae.avg, 3)
         acc_eta = [round(x.avg, 3) for x in self.acc_eta]
-        return f'krc:{krc} | lsd:{lsd} | ed:{ed} | hr@1:{hr[0]} | hr@2:{hr[1]} | hr@3:{hr[2]} | acc@1:{acc[0]} | acc@2:{acc[1]} | acc@3:{acc[2]} | rmse:{rmse} | mae: {mae} |acc_eta@20:{acc_eta[1]}|acc_eta@30:{acc_eta[2]}'
+        return f"krc:{krc} | lsd:{lsd} | ed:{ed} | hr@1:{hr[0]} | hr@2:{hr[1]} | hr@3:{hr[2]} | acc@1:{acc[0]} | acc@2:{acc[1]} | acc@3:{acc[2]} | rmse:{rmse} | mae: {mae} |acc_eta@20:{acc_eta[1]}|acc_eta@30:{acc_eta[2]}"
 
     def update_eta(self, label_len, eta_pred, eta_label):
         def tensor2lst(x):
@@ -370,30 +484,46 @@ class Metric(object):
             except:
                 return x
 
-        label_len, eta_pred, eta_label = [tensor2lst(x) for x in [label_len, eta_pred, eta_label]]
+        label_len, eta_pred, eta_label = [
+            tensor2lst(x) for x in [label_len, eta_pred, eta_label]
+        ]
 
-        label_len, eta_pred, eta_label = self.eta_filter_len(label_len, eta_pred, eta_label)
+        label_len, eta_pred, eta_label = self.eta_filter_len(
+            label_len, eta_pred, eta_label
+        )
 
         batch_size = len(eta_pred)
-
-        mae = np.array(
-            [calc_mae(pre, lab[:lab_len]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+        mae = np.sum(np.array([calc_mae(pre, lab[:lab_len]) for pre, lab, lab_len in
+                               zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
         self.mae.update(mae, batch_size)
-        rmse = np.array(
-            [calc_rmse(pre, lab[:lab_len]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+        rmse = np.sum(np.array([calc_rmse(pre, lab[:lab_len]) for pre, lab, lab_len in
+                                zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
         self.rmse.update(rmse, batch_size)
-        mape = np.array(
-            [calc_mape(pre, lab[:lab_len]) for pre, lab, lab_len in zip(eta_pred, eta_label, label_len)]).mean()
+        mape = np.sum(np.array([calc_mape(pre, lab[:lab_len]) for pre, lab, lab_len in
+                                zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
         self.mape.update(mape, batch_size)
+
         for n in range(len(self.acc_eta_list)):
-            acc_eta_n = np.array([acc_eta(pre, lab[:lab_len], self.acc_eta_list[n]) for pre, lab, lab_len in
-                                  zip(eta_pred, eta_label, label_len)]).mean()
+            acc_eta_n = np.sum(np.array([acc_eta(pre, lab[:lab_len], self.acc_eta_list[n]) for pre, lab, lab_len in
+                                         zip(eta_pred, eta_label, label_len)]) * label_len) / np.sum(label_len)
             self.acc_eta[n].update(acc_eta_n, batch_size)
 
 
+        self.mae.update(mae, batch_size)
+
+        self.rmse.update(rmse, batch_size)
+
+        self.mape.update(mape, batch_size)
+
+
     def eta_to_dict(self) -> Dict:
-        result = {'rmse': self.rmse.avg, 'mae': self.mae.avg, 'mape': self.mape.avg}
-        result.update({f'acc_eta@{(i+1)*10}': self.acc_eta[i].avg for i in range(len(self.acc_eta_list))})
+        result = {"rmse": self.rmse.avg, "mae": self.mae.avg, "mape": self.mape.avg}
+        result.update(
+            {
+                f"acc_eta@{(i+1)*10}": self.acc_eta[i].avg
+                for i in range(len(self.acc_eta_list))
+            }
+        )
         return result
 
     def eta_to_str(self):
@@ -401,21 +531,5 @@ class Metric(object):
         mae = round(self.mae.avg, 3)
         mape = round(self.mape.avg, 3)
         acc_eta = [round(x.avg, 3) for x in self.acc_eta]
-        return f' mse:{rmse} | mae: {mae} | mape: {mape} |acc_eta@20:{acc_eta[1]}'
+        return f" mse:{rmse} | mae: {mae} | mape: {mape} |acc_eta@20:{acc_eta[1]}"
 
-if __name__ == '__main__':
-    # example
-    prediction = [4, 1, 2, 5, 3, 0]
-    label = [4,3,5,1,2,3]
-    label_len = 4 # The observation of label[:label_len] is not affected by new coming orders.
-
-    print('prediction:', prediction)
-    print('label:', label)
-    print('label not affected by new orders:', label[:label_len])
-
-    print('HR@3:' , hit_rate(prediction, label, label_len, 3))
-    print('KRC:'  , kendall_rank_correlation(prediction, label, label_len))
-    print('LSD:'  , location_deviation(prediction, label, label_len, 'square'))
-    print('LMD'   , location_deviation(prediction, label, label_len, 'mean'))
-    print('ACC@2:', route_acc(prediction, label[:label_len], 2))
-    print('ED:'   , edit_distance(prediction, label[:label_len]))
