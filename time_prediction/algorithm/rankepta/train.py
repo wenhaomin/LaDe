@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
+"""
+please specify params['route_predictor_path'] to the path of the trained route predictor
+"""
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "4"
 import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.util import *
-from utils.eval import Metric
 from algorithm.ranketpa.dataset import RankEptaDataset, ModelDataset
 
 from algorithm.ranketpa.time_predictor import RankEPTA
-
+from algorithm.ranketpa.train_route import main as route_main
 def eta_mae_loss_calc(V_at, label_len, eta, label_route):
-    N = eta.shape[1]
+    N = V_at.shape[2]
     B = V_at.shape[0]
     T = V_at.shape[1]
     V_at = V_at.reshape(B*T, N)
@@ -57,32 +60,41 @@ def process_batch_eta(batch, model, device, params):
 
     return eta_loss
 
-def get_eta_result(pred, label, label_len, label_route):
+def get_eta_result(eta_pred, eta_label, route_label_len, label_route):
     N = label_route.shape[2]
     B = label_route.shape[0]
     T = label_route.shape[1]
-    pred_result = torch.zeros(B*T, N).to(label.device)
-    label_result = torch.zeros(B*T, N).to(label.device)
-    label_len = label_len.reshape(B*T)
-    label = label.reshape(B*T, N)
+    #prepare to save eta prediction and label
+    eta_pred_result = torch.zeros(B*T, N).to(eta_label.device)
+    eta_label_result = torch.zeros(B*T, N).to(eta_label.device)
 
-    label_len_list = []
+    # route label affected by newly arrival packages
+    route_label_len = route_label_len.reshape(B*T)
+    eta_label = eta_label.reshape(B*T, N)
+
+    # route and eta label not affected by newly arrival packages
+    route_label = label_route.reshape(B*T, N)
+    eta_label_len = route_label_len.reshape(B*T)
+
+    route_label_len_list = []
     eta_pred_list = []
     eta_label_list = []
-
-    label_route = label_route.reshape(B * T, N)
-    for i in range(B*T):
-        if label_len[i].long().item() != 0:
-            pred_result[i][:label_len[i].long().item()] = pred[i][label_route[i][:label_len[i].long().item()]].squeeze(1)
-            label_result[i][:label_len[i].long().item()] = label[i][:label_len[i].long().item()]
+    eta_label_len_list = []
 
     for i in range(B*T):
-        if label_len[i].long().item() != 0:
-            eta_label_list.append(label_result[i].detach().cpu().numpy().tolist())
-            eta_pred_list.append(pred_result[i].detach().cpu().numpy().tolist())
-            label_len_list.append(label_len[i].detach().cpu().numpy().tolist())
+        if route_label_len[i].long().item() != 0:
+            eta_pred_result[i][:eta_label_len[i].long().item()] = eta_pred[i][route_label[i][:eta_label_len[i].long().item()]].squeeze(1)
+            eta_label_result[i][:eta_label_len[i].long().item()] = eta_label[i][:eta_label_len[i].long().item()]
 
-    return  torch.LongTensor(label_len_list), torch.LongTensor(eta_pred_list), torch.LongTensor(eta_label_list)
+
+    for i in range(B*T):
+        if route_label_len[i].long().item() != 0:
+            eta_label_list.append(eta_label_result[i].detach().cpu().numpy().tolist())
+            eta_pred_list.append(eta_pred_result[i].detach().cpu().numpy().tolist())
+            route_label_len_list.append(route_label_len[i].detach().cpu().numpy().tolist())
+            eta_label_len_list.append(eta_label_len[i].detach().cpu().numpy().tolist())
+
+    return  torch.LongTensor(route_label_len_list), torch.LongTensor(eta_pred_list), torch.LongTensor(eta_label_list), torch.LongTensor(eta_label_len_list)
 
 def test_model_eta(model, test_dataloader, device, pad_value, params, save2file, mode):
     from utils.eval import Metric
@@ -90,14 +102,15 @@ def test_model_eta(model, test_dataloader, device, pad_value, params, save2file,
     evaluators = [Metric([1, 5]), Metric([1, 11]), Metric([1, 15]), Metric([1, 25])]
 
     with torch.no_grad():
-
         for batch in tqdm(test_dataloader):
             batch = to_device(batch, device)
             V, V_reach_mask, label, label_len, V_at, sort_idx = batch
             eta = model(V, V_reach_mask, sort_idx)
-            label_len, eta_pred, eta_label = get_eta_result(eta, V_at, label_len, label)
+            route_label_len, eta_pred, eta_label, eta_label_len = get_eta_result(eta, V_at, label_len, label)
             for e in evaluators:
-                e.update_eta(label_len, eta_pred, eta_label)
+                e.update_eta(eta_label_len, eta_pred, eta_label)
+    if mode == 'val':
+        return evaluators[-1]
     for e in evaluators:
         print(e.eta_to_str())
         params_save = dict_merge([e.eta_to_dict(), params])
@@ -105,18 +118,15 @@ def test_model_eta(model, test_dataloader, device, pad_value, params, save2file,
         save2file(params_save)
     return evaluators[-1]
 
-def train_val_test(train_loader, val_loader, test_loader, model, device, process_batch, test_model, params, save2file):
-    if params['task'] == 'time_predict':
-        mode = 'minimize'
-        evalate_metric = 'mae'
-    elif params['task'] == 'route_predict':
-        mode = 'maximize'
-        evalate_metric = 'krc'
 
+def train_val_test(train_loader, val_loader, test_loader, model, device, process_batch, test_model, params, save2file):
+
+    mode = 'minimize'
+    evalate_metric = 'mae'
 
     model.to(device)
     optimizer = Adam(model.parameters(), lr=params['lr'], weight_decay=params['wd'])
-    early_stop = EarlyStop(mode=mode, patience=3)
+    early_stop = EarlyStop(mode=mode, patience=params['early_stop'])
     model_name = model.model_file_name() + f'{time.time()}'
     model_path = ws + f'/data/dataset/{params["dataset"]}/{params["task"]}/{model_name}'
     params['model_path'] = model_path
@@ -141,40 +151,24 @@ def train_val_test(train_loader, val_loader, test_loader, model, device, process
                 loss.backward()
                 optimizer.step()
         if params['is_test']: break #just train one epoch for test the code
-        if params['task'] == 'time_predict':
-            val_result = test_model(model, val_loader, device, params['pad_value'], params, save2file, 'val')
 
-            print('\nval result:', val_result.eta_to_str(), f'Best {evalate_metric}:', round(early_stop.best_metric(),3), '| Best epoch:', early_stop.best_epoch)
-            is_best_change = early_stop.append(val_result.eta_to_dict()[evalate_metric])
+        val_result = test_model(model, val_loader, device, params['pad_value'], params, save2file, 'val')
 
-            if is_best_change:
-                print('value:',val_result.eta_to_dict()[evalate_metric], early_stop.best_metric())
-                torch.save(model.state_dict(), model_path)
-                print('best model saved')
-                print('model path:', model_path)
+        print('\nval result:', val_result.eta_to_str(), f'Best {evalate_metric}:', round(early_stop.best_metric(),3), '| Best epoch:', early_stop.best_epoch)
+        is_best_change = early_stop.append(val_result.eta_to_dict()[evalate_metric])
 
-            if params['is_test']:
-                print('model_path:', model_path)
-                torch.save(model.state_dict(), model_path)
-                print('best model saved !!!')
-                break
+        if is_best_change:
+            print('value:',val_result.eta_to_dict()[evalate_metric], early_stop.best_metric())
+            torch.save(model.state_dict(), model_path)
+            print('best model saved')
+            print('model path:', model_path)
 
-        elif params['task'] == 'route_predict':
-            val_result = test_model(model, val_loader, device, params['pad_value'], params, save2file, 'val')
-            print('\nval result:', val_result.to_str(), f'Best {evalate_metric}:', round(early_stop.best_metric(),3), '| Best epoch:', early_stop.best_epoch)
-            is_best_change = early_stop.append(val_result.to_dict()[evalate_metric])
+        if params['is_test']:
+            print('model_path:', model_path)
+            torch.save(model.state_dict(), model_path)
+            print('best model saved !!!')
+            break
 
-            if is_best_change:
-                print('value:',val_result.to_dict()[evalate_metric], early_stop.best_metric())
-                torch.save(model.state_dict(), model_path)
-                print('best model saved')
-                print('model path:', model_path)
-
-            if params['is_test']:
-                print('model_path:', model_path)
-                torch.save(model.state_dict(), model_path)
-                print('best model saved !!!')
-                break
 
     try:
         print('loaded model path:', model_path)
@@ -183,104 +177,102 @@ def train_val_test(train_loader, val_loader, test_loader, model, device, process
     except:
         print('load best model failed')
 
-    if params['task'] == 'time_predict':
-        test_result = test_model(model, test_loader, device, params['pad_value'],params, save2file, 'test')
-        print('\n-------------------------------------------------------------')
-        print('Best epoch: ', early_stop.best_epoch)
-        print(f'{params["model"]} Evaluation in test:', test_result.eta_to_str())
-        nni.report_final_result(test_result.eta_to_dict()[evalate_metric])
-    elif params['task'] == 'route_predict':
-        test_result = test_model(model, test_loader, device, params['pad_value'],params, save2file, 'test')
-        print('\n-------------------------------------------------------------')
-        print('Best epoch: ', early_stop.best_epoch)
-        print(f'{params["model"]} Evaluation in test:', test_result.to_str())
-        nni.report_final_result(test_result.to_dict()[evalate_metric])
+
+    test_result = test_model(model, test_loader, device, params['pad_value'],params, save2file, 'test')
+    print('\n-------------------------------------------------------------')
+    print('Best epoch: ', early_stop.best_epoch)
+    print(f'{params["model"]} Evaluation in test:', test_result.eta_to_str())
     return params
 
+
 def main(params):
-    params['task'] = 'time_predict'  # route_predict before time_predict
-    params['model_path'] = ''
-    params['sort_x_size'] = 6
+
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    if params['task'] == 'route_predict':
-        #train the route predictor
-        params['model'] = 'ranketpa'
-        params['pad_value'] = params['max_task_num'] - 1
+    route_predictor, save2file = get_model_function(params['model'])
+    rp_model = route_predictor(params)
+    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_sh/sort_model/hidden_size$64+dataset$delivery_sh.route1702460279.4360569'
+    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_sh/sort_model/hidden_size$64+dataset$delivery_sh.route1702470023.6811574'
+    params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_yt/sort_model/hidden_size$64+dataset$delivery_yt.route1702463845.4940734'
+    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_cq/sort_model/hidden_size$64+dataset$delivery_cq.route1702519157.7561977'
+    rp_model_path = params['route_predictor_path']
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    if rp_model_path != '':
+        #specify the path of your route predictor
+        rp_model.load_state_dict(torch.load(rp_model_path))
+    else:
+        print('start training a route predictor')
+        route_main(params)
+    rp_model.to(device)
+    params['train_path'], params['val_path'], params['test_path'] = get_dataset_path(params)
 
-        # load the trained route predictor
-        model, save2file = get_model_function(params['model'])
-        rp_model = model(params)
-        rp_model_path = params['model_path']
-        device = torch.device(f'cuda:{params["cuda_id"]}' if torch.cuda.is_available() else 'cpu')
-        if rp_model_path != '':
-            rp_model.load_state_dict(torch.load(rp_model_path))
-        rp_model.to(device)
-        params['train_path'], params['val_path'], params['test_path'] = get_dataset_path(params)
-        def save_route_predictions(model, mode, params):
-            dataset = RankEptaDataset(mode=mode, params=params) # mode == 'train', 'val', 'test'
-            data_loader = DataLoader(dataset, batch_size=params['batch_size'], shuffle=False, drop_last=False)
-            model.eval()
+    def save_route_predictions(model, mode, params):
+        dataset = RankEptaDataset(mode=mode, params=params) # mode == 'train', 'val', 'test'
+        data_loader = DataLoader(dataset, batch_size=params['batch_size'], shuffle=False, drop_last=False)
+        model.eval()
 
-            route_predicts = torch.empty(0).to(device)
-            for batch in tqdm(data_loader):
-                batch = to_device(batch, device)
-                V, V_len, V_reach_mask, start_fea, start_idx, route_label, label_len, time_label = batch
-                B, T, N = V_reach_mask.shape
-                outputs, pointers = model(V, V_reach_mask)
-                pointers = pointers.reshape(B, T, N)
-                route_predicts = torch.cat([route_predicts, pointers], dim=0)
+        route_predicts = torch.empty(0).to(device)
+        for batch in tqdm(data_loader):
+            batch = to_device(batch, device)
+            V, V_len, V_reach_mask, start_fea, start_idx, route_label, label_len, time_label = batch
+            B, T, N = V_reach_mask.shape
+            outputs, pointers = model(V, V_reach_mask)
+            pointers = pointers.reshape(B, T, N)
+            route_predicts = torch.cat([route_predicts, pointers], dim=0)
 
-            route_predicts = route_predicts.detach().cpu().numpy()
+        route_predicts = route_predicts.detach().cpu().numpy()
 
-            dataset = params['dataset']
-            fout = ws + f'/data/dataset/{dataset}/{mode}_route_predict.npy'
-            np.save(fout, route_predicts)
+        dataset = params['dataset']
+        fout = ws + f'/data/dataset/{dataset}/{mode}_route_predict.npy'
+        np.save(fout, route_predicts)
+        print('route prediction results saved at: ', fout)
 
-        # make and save route predictions
-        for mode in ['train', 'val', 'test']:
-            save_route_predictions(rp_model, mode, params)
+    # make and save route predictions
+    for mode in ['train', 'val', 'test']:
+        save_route_predictions(rp_model, mode, params)
 
-    elif params['task'] == 'time_predict':
+    #time prediction
+    def get_order_data(params):
+        file_path = ws + f'/data/dataset/{params["dataset"]}'
+        train_file_path = file_path + '/train_route_predict.npy'
+        val_file_path = file_path + '/val_route_predict.npy'
+        test_file_path = file_path + '/test_route_predict.npy'
+        train_sort_idx = np.load(train_file_path, allow_pickle=True)
+        val_sort_idx = np.load(val_file_path, allow_pickle=True)
+        test_sort_idx = np.load(test_file_path, allow_pickle=True)
+        return train_sort_idx, val_sort_idx, test_sort_idx
 
-        def get_order_data(params):
-            file_path = ws + f'/data/dataset/{params["dataset"]}'
-            train_file_path = file_path + '/train_route_predict.npy'
-            val_file_path = file_path + '/val_route_predict.npy'
-            test_file_path = file_path + '/test_route_predict.npy'
-            train_sort_idx = np.load(train_file_path, allow_pickle=True)
-            val_sort_idx = np.load(val_file_path, allow_pickle=True)
-            test_sort_idx = np.load(test_file_path, allow_pickle=True)
-            return train_sort_idx, val_sort_idx, test_sort_idx
-        
-        def get_dataloader(data_list, sort_id_list):
-            dataloader_list = []
-            for i in range(len(data_list)):
-                V = data_list[i]['V']
-                V_reach_mask = data_list[i]['V_reach_mask']
-                route_label = data_list[i]['route_label']
-                label_len = data_list[i]['label_len']
-                time_label =  data_list[i]['time_label']
-                sort_idx = sort_id_list[i]
-                sample_num = len(V)
-                data_loader = DataLoader(dataset=ModelDataset(V, V_reach_mask, route_label, label_len, time_label, sort_idx, sample_num), batch_size=params['batch_size'], shuffle=False, drop_last=True)
-                dataloader_list.append(data_loader)
-            return dataloader_list[0], dataloader_list[1], dataloader_list[2]
+    def get_dataloader(data_list, sort_id_list, is_test=False):
+        if is_test:
+            data_list = data_list[:1000]
+        dataloader_list = []
+        for i in range(len(data_list)):
+            V = data_list[i]['V']
+            V_reach_mask = data_list[i]['V_reach_mask']
+            route_label = data_list[i]['route_label']
+            label_len = data_list[i]['label_len']
+            time_label =  data_list[i]['time_label']
+            sort_idx = sort_id_list[i]
+            sample_num = len(V)
+            data_loader = DataLoader(dataset=ModelDataset(V, V_reach_mask, route_label, label_len, time_label, sort_idx, sample_num), batch_size=params['batch_size'], shuffle=False, drop_last=True)
+            dataloader_list.append(data_loader)
+        return dataloader_list[0], dataloader_list[1], dataloader_list[2]
 
-        train_sort_idx, val_sort_idx, test_sort_idx = get_order_data(params)
-        train_path = ws + f'/data/dataset/{params["dataset"]}/train.npy'
-        val_path = ws + f'/data/dataset/{params["dataset"]}/val.npy'
-        test_path = ws + f'/data/dataset/{params["dataset"]}/test.npy'
-        train_data = np.load(train_path, allow_pickle=True).item()
-        val_data = np.load(val_path, allow_pickle=True).item()
-        test_data = np.load(test_path, allow_pickle=True).item()
-        train_loader, val_loader, test_loader = get_dataloader([train_data, val_data, test_data], [train_sort_idx, val_sort_idx, test_sort_idx])
+    train_sort_idx, val_sort_idx, test_sort_idx = get_order_data(params)
+    train_path = ws + f'/data/dataset/{params["dataset"]}/train.npy'
+    val_path = ws + f'/data/dataset/{params["dataset"]}/val.npy'
+    test_path = ws + f'/data/dataset/{params["dataset"]}/test.npy'
+    train_data = np.load(train_path, allow_pickle=True).item()
+    val_data = np.load(val_path, allow_pickle=True).item()
+    test_data = np.load(test_path, allow_pickle=True).item()
+    train_loader, val_loader, test_loader = get_dataloader([train_data, val_data, test_data], [train_sort_idx, val_sort_idx, test_sort_idx])
 
-        model = RankEPTA(params)
-        model.to(device)
-        from algorithm.ranketpa.time_predictor import save2file
-        result_dict = train_val_test(train_loader, val_loader, test_loader, model, device, process_batch_eta, test_model_eta, params, save2file)
-        params = dict_merge([params, result_dict])
+    model = RankEPTA(params)
+    model.to(device)
+    from algorithm.ranketpa.time_predictor import save2file
+
+    result_dict = train_val_test(train_loader, val_loader, test_loader, model, device, process_batch_eta, test_model_eta, params, save2file)
+    params = dict_merge([params, result_dict])
 
     return params
 
@@ -291,25 +283,3 @@ def get_params():
     parser.add_argument('--model', type=str, default='ranketpa')
     args, _ = parser.parse_known_args()
     return args
-
-if __name__ == "__main__":
-    import time, nni
-    import logging
-    logger = logging.getLogger('training')
-    print(time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()))
-    try:
-        tuner_params = nni.get_next_parameter()
-        logger.debug(tuner_params)
-        params = vars(get_params())
-        params.update(tuner_params)
-        for data_set in ['delivery_cq']:
-            params['dataset'] = data_set
-            params['model_path'] = None # time predictor
-            params['task'] = 'time_predict'  # time_predict
-            params['cuda_id'] = 1
-            params['hidden_size'] = 64
-
-            main(params)
-    except Exception as exception:
-        logger.exception(exception)
-        raise
