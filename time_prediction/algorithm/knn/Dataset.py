@@ -30,6 +30,3 @@ class KNNDataset(Dataset):
         time_label = self.data['time_label'][index]
 
         return  V, V_reach_mask, start_fea, route_label, label_len, time_label
-
-if __name__ == '__main__':
-    pass
