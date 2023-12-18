@@ -145,7 +145,6 @@ class DeliveryDataset(object):
             courier_id = []  # Integer
             query_time = []  # string
             unfinished_task = []  # string
-            label_task = []  # string
 
             # The smaller the index, the earlier it is picked, and the sorted list is obtained by sorting according to the actual picked time.
             todo_rank = list(map(int, todo_lst))
@@ -176,12 +175,12 @@ class DeliveryDataset(object):
             if close_accept_time != np.inf:
                 todo_rank = list(filter(lambda k: c_v[k - id_first][self.idx_finish_time] <= close_accept_time, todo_rank))
 
-            for task in todo_rank:
+            for task in todo_rank: #filtered tasks
                 route_label[t, todo_rank.index(task)] = shuffled_list.index(task)
             for task in todo_rank_:
                 task_idx = task - id_first
                 eta_label_td[t, todo_rank_.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[task_idx - 1][self.idx_finish_time]
-                V_at[t, todo_rank_.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[start][self.idx_finish_time]
+                V_at[t, todo_rank_.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[start][self.idx_finish_time] # actual arrival time of all tasks
                 route_label_all[t, todo_rank_.index(task)] = shuffled_list.index(task)
 
             route_label_len[t] = len(todo_rank)
@@ -320,7 +319,6 @@ class DeliveryDataset(object):
 
         return self.data
 
-
     def multi_thread_work(self, parameter_queue, function_name, thread_number=5):
         from multiprocessing import Pool
         """
@@ -354,7 +352,6 @@ class DeliveryDataset(object):
 
     def get_data(self):
         if os.path.exists(self.params['fin_temp']):
-
             df = pd.read_csv(self.params['fin_temp'] + "/package_feature.csv", sep=',', encoding='utf-8')  # package features
             self.df_cou = pd.read_csv(self.params['fin_temp'] + "/courier_feature.csv", sep=',', encoding='utf-8')  # courier features
         else:
@@ -401,9 +398,9 @@ class DeliveryDataset(object):
 def get_params():
     parser = argparse.ArgumentParser()
     # dataset parameters
-    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_cq/')
-    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw/delivery/delivery_cq.parquet') 
-    parser.add_argument('--data_name', type=str, default='delivery_cq')
+    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_sh/')#利用过滤后的样本构造test.npy
+    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw/delivery/delivery_sh.csv') # 没有经过data_convert的原始文件
+    parser.add_argument('--data_name', type=str, default='delivery_sh')
     parser.add_argument('--num_thread', type=int, default=20)
     parser.add_argument('--random_seed', type=int, default=1)
 
@@ -429,7 +426,7 @@ def main():
     if params['is_test']: params['data_name'] += '_test'
     data_name = params['data_name']
 
-    for mode in [ 'test', 'train', 'val']:  # 'train', 'val', 'test', 'train', 'val',
+    for mode in [ 'test', 'train', 'val']:  # 'train', 'val', 'test'
         if mode == 'train':
             fout = ws + f'/data/dataset/{data_name}/train.npy'
             dir_check(fout)
@@ -453,7 +450,6 @@ def main():
             print('test file saved at: ', fout)
 
     print('Dataset constructed...')
-
 
 if __name__ == "__main__":
     main()
