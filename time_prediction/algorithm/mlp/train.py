@@ -3,7 +3,7 @@
 import torch.nn.functional as F
 from tqdm import  tqdm
 import torch
-from utils.util import to_device, get_nonzeros_eta, dict_merge
+from utils.util import to_device, dict_merge
 from algorithm.mlp.Dataset import MLPDataset
 
 def get_eta_result(pred, label, label_len, label_route):
@@ -48,12 +48,15 @@ def test_model(model, test_dataloader, device, pad_value, params, save2file, mod
 
             for e in evaluators:
                 e.update_eta(label_len, eta_pred, eta_label)
-    for e in evaluators:
-        print(e.eta_to_str())
-        params_save = dict_merge([e.eta_to_dict(), params])
-        params_save['eval_min'],params_save['eval_max'] = e.len_range
-        save2file(params_save)
-    return evaluators[-1].eta_to_dict()
+    evaluator = evaluators[-1]
+    if mode == 'val':
+        return evaluator
+    else:
+        for e in evaluators:
+            params_save = dict_merge([e.eta_to_dict(), params])
+            params_save['eval_min'],params_save['eval_max'] = e.len_range
+            save2file(params_save)
+        return evaluators[-1]
 
 
 def eta_mae_loss_calc(V_at, label_len, eta, label_route):
@@ -70,29 +73,30 @@ def eta_mae_loss_calc(V_at, label_len, eta, label_route):
         label_result = torch.cat([label_result, V_at[i][:label_len[i].long().item()]])
     return F.l1_loss(pred_result, label_result)
 
+
 def process_batch(batch, model, device, params):
     batch = to_device(batch, device)
     V, V_reach_mask, route_label, label_len, time_label, start_fea, cou_fea = batch
 
-    eta= model(V, V_reach_mask, start_fea, cou_fea) #[B * T, N]
+    eta = model(V, V_reach_mask, start_fea, cou_fea)
 
     eta_loss = eta_mae_loss_calc(time_label, label_len, eta, route_label)
-
 
     return eta_loss
 
 def main(params):
-
-    params['sort_x_size'] = 6
+    params['model'] = 'mlp'
     params['pad_value'] = params['max_task_num'] - 1
+    params['task'] = 'time'
     from utils.util import run
     run(params, MLPDataset, process_batch, test_model)
+
 
 def get_params():
     from utils.util import get_common_params
     parser = get_common_params()
     # Model parameters
     parser.add_argument('--model', type=str, default='mlp')
-    parser.add_argument('--hidden_size', type=int, default=128)
+    # parser.add_argument('--hidden_size', type=int, default=128)
     args, _ = parser.parse_known_args()
     return args
