@@ -10,7 +10,7 @@ def merge_first_two_dim(arr):
     return merged_arr
 
 class ModelDataset(Dataset):
-    def __init__(self, V, V_reach_mask, label, label_len, V_at, sort_idx, sample_num):
+    def __init__(self, V, V_reach_mask, label, label_len, V_at, sort_idx,  sample_num):
         super(ModelDataset, self).__init__()
         self.V = V
         self.V_reach_mask = V_reach_mask
@@ -31,6 +31,8 @@ class ModelDataset(Dataset):
         V_at = self.V_at[index]
         sort_idx = self.sort_idx[index]
         return V, V_reach_mask, label, label_len, V_at, sort_idx
+
+        # return V, V_reach_mask, label, label_len, V_at, sort_idx, route_label_all, eta_label_len
     
 class RankEptaDataset(Dataset):
     def __init__(
@@ -63,7 +65,6 @@ class RankEptaDataset(Dataset):
         label_len = self.data['label_len'][index]
         time_label = self.data['time_label'][index]
 
-        return  V, V_len, V_reach_mask, start_fea, start_idx, route_label, label_len, time_label
 
-if __name__ == '__main__':
-    pass
+
+        return  V, V_len, V_reach_mask, start_fea, start_idx, route_label, label_len, time_label
