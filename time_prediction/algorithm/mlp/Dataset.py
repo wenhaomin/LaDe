@@ -24,6 +24,7 @@ class MLPDataset(Dataset):
         self.data = np.load(path, allow_pickle=True).item()
 
     def __len__(self):
+        # return 1000
         return len(self.data['label_len'])
 
     def __getitem__(self, index):
@@ -37,6 +38,3 @@ class MLPDataset(Dataset):
         cou_fea = self.data['cou_fea'][index]
 
         return V, V_reach_mask, route_label, label_len, time_label, start_fea, cou_fea
-
-if __name__ == '__main__':
-    pass
