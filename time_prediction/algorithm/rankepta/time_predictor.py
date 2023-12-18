@@ -94,7 +94,7 @@ class RankEPTA(nn.Module):
         self.n_head = 8
 
         self.pos_table = get_sinusoid_encoding(26, self.embed_dim)
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
         self.pos_table = self.pos_table.to(self.device)
         # for sort_x embedding layer
         self.sort_x_embedding = nn.Linear(in_features=self.sort_x_size, out_features=self.hidden_size, bias=False)
@@ -154,7 +154,7 @@ class RankEPTA(nn.Module):
 
 from utils.util import save2file_meta, ws
 def save2file(params):
-    file_name = ws + f'/output/time_prediction/{params["model"]}.csv'
+    file_name = ws + f'/output/time_prediction/{params["dataset"]}/{params["model"]}.csv'
     # 写表头
     head = [
         # data setting
@@ -165,6 +165,6 @@ def save2file(params):
         'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop',  'is_test', 'log_time',
         # metric result
 
-        'acc_eta@10', 'acc_eta@20', 'acc_eta@30', 'acc_eta@40', 'acc_eta@50', 'acc_eta@60','rmse', 'mae',
+        'acc_eta@10', 'acc_eta@20', 'acc_eta@30', 'acc_eta@40', 'acc_eta@50', 'acc_eta@60','mae', 'rmse',
     ]
     save2file_meta(params,file_name,head)
