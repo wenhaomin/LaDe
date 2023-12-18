@@ -398,9 +398,9 @@ class DeliveryDataset(object):
 def get_params():
     parser = argparse.ArgumentParser()
     # dataset parameters
-    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_sh/')#利用过滤后的样本构造test.npy
-    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw/delivery/delivery_sh.csv') # 没有经过data_convert的原始文件
-    parser.add_argument('--data_name', type=str, default='delivery_sh')
+    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_cq/')
+    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw/delivery/delivery_cq.csv')
+    parser.add_argument('--data_name', type=str, default='delivery_cq')
     parser.add_argument('--num_thread', type=int, default=20)
     parser.add_argument('--random_seed', type=int, default=1)
 
