@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
 import sys
+import os
+cur_path = os.path.abspath(__file__)
+current_ws = os.path.dirname(os.path.dirname(os.path.dirname(cur_path)))
+sys.path.append(current_ws)
 from sklearn.neighbors import KNeighborsRegressor
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -13,14 +17,16 @@ from utils.eval import Metric
 from algorithm.knn.Dataset import KNNDataset
 
 def test(eta_model,  test_dataset, params):
+    import time
     test_eta_label = []
     test_label_len = []
     test_eta_pred = []
+    inference_time = []
 
     N = params['max_task_num']
     print('Begin to evaluate')
 
-    iter_num = 5 if params['is_test'] else test_dataset.max_iter
+    iter_num = 1000 if params['is_test'] else test_dataset.max_iter
     pbar = tqdm(total=iter_num)
 
     index = 0
@@ -44,8 +50,11 @@ def test(eta_model,  test_dataset, params):
 
             start_node_fea = start_fea[t]
             input = np.concatenate([start_node_fea, node_fea])
-
+                    
+            start = time.perf_counter()
             pred_eta = eta_model.predict([input])
+            end = time.perf_counter()
+            inference_time.append((end-start))
             eta_pred_t = np.zeros([N])
             for i in range(label_len_t):
                 eta_pred_t[i] = pred_eta[0][route_label_t[i]]#用真实路线sort
@@ -73,45 +82,50 @@ def main(params):
     train_dataset = KNNDataset(mode='train', params=params)
     test_dataset = KNNDataset(mode='test', params=params)
 
-    # construct training data
-    input_lst = []
-    label_lst = []
-    iter_num = 5 if params['is_test'] else test_dataset.max_iter
-    index = 0
-    while index < iter_num:
-        V, V_reach_mask, start_fea, route_label, label_len, time_label = train_dataset[index]
+    if params["inference"]:    
+        eta_model = MultiOutputRegressor(KNeighborsRegressor(n_neighbors=3))
+        eta_model = joblib.load( f'{params["model_path"]}')
+    else:
+        # construct training data
+        input_lst = []
+        label_lst = []
+        iter_num = 5 if params['is_test'] else test_dataset.max_iter
+        index = 0
+        while index < iter_num:
+            V, V_reach_mask, start_fea, route_label, label_len, time_label = train_dataset[index]
 
-        T = V_reach_mask.shape[0] # init_mask: (T, N)
-        for t in range(T):
-            eta_label = time_label[t, :]
-            route_label_t = route_label[t,:]
-            label_len_t = int(label_len[t])
-            if label_len_t == 0:
-                continue
+            T = V_reach_mask.shape[0] # init_mask: (T, N)
+            for t in range(T):
+                eta_label = time_label[t, :]
+                route_label_t = route_label[t,:]
+                label_len_t = int(label_len[t])
+                if label_len_t == 0:
+                    continue
 
-            #construct, target, feature, label for each step
-            mask = (V_reach_mask[t] == False).astype(int).reshape(-1, 1)
-            node_fea = V[t]
+                #construct, target, feature, label for each step
+                mask = (V_reach_mask[t] == False).astype(int).reshape(-1, 1)
+                node_fea = V[t]
 
-            node_fea = (node_fea * mask).reshape(-1)
-            start_node_fea = start_fea[t]
-            input = np.concatenate([start_node_fea, node_fea])
+                node_fea = (node_fea * mask).reshape(-1)
+                start_node_fea = start_fea[t]
+                input = np.concatenate([start_node_fea, node_fea])
 
-            label = np.zeros(params['max_task_num'])
-            for i in range(label_len_t):
-                label[route_label_t[i]] = eta_label[i] # feature和label相对应
+                label = np.zeros(params['max_task_num'])
+                for i in range(label_len_t):
+                    label[route_label_t[i]] = eta_label[i] # feature和label相对应
 
-            input_lst.append(input)
-            label_lst.append(label)
+                input_lst.append(input)
+                label_lst.append(label)
 
-        index +=1
-    print('Begin to train model...')
+            index +=1
+        print('Begin to train model...')
 
-    eta_model = MultiOutputRegressor(KNeighborsRegressor(n_neighbors=3))
-    eta_model.fit(np.array(input_lst), np.array(label_lst))
+        eta_model = MultiOutputRegressor(KNeighborsRegressor(n_neighbors=3))
+        eta_model.fit(np.array(input_lst), np.array(label_lst))
 
-    joblib.dump(eta_model, f'{params["dataset"]}_{params["model"]}.pkl')
-    eta_model = joblib.load( f'{params["dataset"]}_{params["model"]}.pkl')
+        joblib.dump(eta_model, f'{params["dataset"]}_{params["model"]}.pkl')
+        eta_model = joblib.load( f'{params["dataset"]}_{params["model"]}.pkl')
+
     print('model well trained...')
 
     result_dict = test(eta_model, test_dataset, params)
@@ -145,3 +159,18 @@ def get_params():
     return args
 
 
+if __name__ == "__main__":
+    cur_path = os.path.abspath(__file__)
+    file = os.path.dirname(os.path.dirname(os.path.dirname(cur_path)))
+
+    params = vars(get_params())
+    datasets = ['delivery_yt', 'delivery_sh', 'delivery_cq']  # the name of datasets
+    args_lst = []
+    params["inference"] = False
+    params['is_test'] = False
+    for dataset in datasets:
+        basic_params = dict_merge([params, {'model': 'knn', 'dataset': dataset}])
+        args_lst.append(basic_params)
+    # note: here you can use parallel running to accelerate the experiment.
+    for p in args_lst:
+        main(p)
