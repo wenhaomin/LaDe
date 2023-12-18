@@ -196,14 +196,13 @@ def process_traj_kernel(args ={}):
             result[(o_id, 'accept_time_minute')] = at
             result[(o_id, 'time_to_last_package')] = row['finish_time_minute']- last_ft
             result[(o_id, 'dis_to_last_package')] = int(geodesic((last_lat_, last_lon_), (row['lat'], row['lng'])).meters)
-
     return result
 
 
 def pre_process(fin, fout, is_test=False, thread_num = 20):
     print('Raw input file:' + fin)
     print('Temporary file:' + fout)
-    df = pd.read_parquet(fin)
+    df = pd.read_csv(fin)
     print('length of the original data: ', len(df))
 
     df = df.drop_duplicates()
@@ -242,7 +241,6 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
     # df = df.rename(columns={'order_id': 'original_order_id'})
     # df.insert(0, 'order_id', range(1, df.shape[0] + 1))
     df.insert(0, 'index', range(1, df.shape[0] + 1))
-
 
     ## get unfinished tasks, (packages)
     print('Get unfinished tasks ...')
@@ -298,10 +296,3 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
         cou_df.to_csv(fout+'courier_feature.csv', index=False)
     print('Data preprocessing is done...')
     return df, cou_df
-
-
-
-
-
-
-
