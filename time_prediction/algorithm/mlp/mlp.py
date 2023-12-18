@@ -42,7 +42,7 @@ class MLP_ETA(nn.Module):
         T =  V_reach_mask.size(1)
         N =  V_reach_mask.size(2)
         mask_index = V.reshape(-1, N, V.shape[-1])[:, :, 0] == 0 #[B, T, N]
-        V_dis = V.reshape(B*T, N, -1)[:, :, [-3, -4]]
+        V_dis = V.reshape(B*T, N, -1)[:, :, [-2, -1]]
         cou_speed = cou_fea.unsqueeze(1).repeat(1, T, 1).reshape(B * T, -1)[:, -1]
         V_avg_t = V_dis / cou_speed.unsqueeze(1).unsqueeze(1).repeat(1, N, 1)
         mask = (~mask_index +0).reshape(B*T, N, 1)
@@ -61,18 +61,16 @@ class MLP_ETA(nn.Module):
 
 from utils.util import save2file_meta
 def save2file(params):
-    from utils.util import ws
-    file_name = ws + f'/output/time_prediction/{params["model"]}.csv'
-    # 写表头
+    from utils.util import save2file_meta, ws
+    file_name = ws + f'/output/time_prediction_1215/{params["dataset"]}/{params["model"]}.csv'
     head = [
         # data setting
-        'dataset', 'min_task_num', 'max_task_num', 'eval_min', 'eval_max',
-        # mdoel parameters
-        'model', 'hidden_size', 'rl_ratio', 'trace_decay',
+        'dataset', 'min_task_num', 'max_task_num', 'task', 'eval_min', 'eval_max',
+        # model parameters
+        'model',
         # training set
-        'num_epoch', 'batch_size', 'lr', 'wd', 'early_stop', 'is_test', 'log_time',
+        'num_epoch', 'batch_size', 'is_test', 'log_time',
         # metric result
-        'mae', 'rmse', 'acc_eta@20', 'acc_eta@10', 'acc_eta@30', 'acc_eta@40', 'acc_eta@50', 'acc_eta@60'
+        'acc_eta@10', 'acc_eta@20', 'acc_eta@30', 'acc_eta@40', 'acc_eta@50', 'acc_eta@60','mae', 'rmse',
     ]
-    save2file_meta(params,file_name,head)
-
+    save2file_meta(params, file_name, head)
