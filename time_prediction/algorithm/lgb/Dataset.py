@@ -27,9 +27,6 @@ class LGBDataset(Dataset):
         route_label = self.data['route_label'][index]
         label_len = self.data['label_len'][index]
         start_fea = self.data['start_fea'][index]
-        time_label = self.data['V_at'][index]
+        time_label = self.data['time_label'][index]
 
         return  V, V_reach_mask, start_fea, route_label, label_len, time_label
-
-if __name__ == '__main__':
-    pass
