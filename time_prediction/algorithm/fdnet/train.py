@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+os.environ["CUDA_VISIBLE_DEVICES"] = "6"
 import torch.optim
 import torch.nn as nn
 import torch.nn.functional as F
@@ -58,11 +58,10 @@ def train_val_test_fd(train_loader, val_loader, test_loader, model_rp, model_tp,
                 E_abs, E, V, V_reach_mask, V_dispatch_mask, \
                 E_mask, label, label_len, V_len, start_fea, start_idx, V_ft, td, V_at = batch
 
-                outputs, pointers, time_duration_predict, eta_predict, t_mask = model_rp(V, E, V_ft,
+                outputs, pointers, eta_predict, t_mask = model_rp(V, E, V_ft,
                                                                     label_len, V_reach_mask, model_tp,
                                                                     start_idx, E_abs,
-                                                                    E_mask, V_dispatch_mask, start_fea,
-                                                                    mode='teacher_force')
+                                                                    E_mask, V_dispatch_mask, start_fea)
 
                 loss_rp = build_loss(outputs, label, params['pad_value'])
                 loss_tp = criterion_tp(eta_predict, V_at.reshape(-1, label.size(-1)) * t_mask)
@@ -121,7 +120,7 @@ def test_model(model_rp, model_tp, test_dataloader, device, params,save2file, mo
             E_abs, E, V, V_reach_mask, V_dispatch_mask, \
             E_mask, label, label_len, V_len, start_fea, start_idx, V_ft, td, V_at = batch
 
-            pointers, eta_pred = model_rp(V, E, V_ft, label_len, V_reach_mask, model_tp, start_idx,  E_abs, E_mask, V_dispatch_mask, start_fea, mode=params['prediction_method'])
+            outputs, pointers, eta_pred, t_mask = model_rp(V, E, V_ft, label_len, V_reach_mask, model_tp, start_idx,  E_abs, E_mask, V_dispatch_mask, start_fea)
 
             pred_steps, label_steps, labels_len, eta_preds, eta_labels =  get_nonzeros_eta(pointers.reshape(-1, label.size(-1)), label.reshape(-1, label.size(-1)), label_len.reshape(-1), eta_pred.reshape(-1, label.size(-1)), V_at.reshape(-1, label.size(-1)), params['pad_value'])
             for e in evaluators:
@@ -138,7 +137,6 @@ def test_model(model_rp, model_tp, test_dataloader, device, params,save2file, mo
 def main(params):
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    params['prediction_method'] = 'greedy'
     params['device'] = device
 
     params['train_path'], params['val_path'], params['test_path'] = get_dataset_path(params)
