@@ -31,6 +31,7 @@ class Decoder(nn.Module):
         self.beam_size = 2
         self.mask = None
         self.num_nodes = None
+        self.step_embed = nn.Embedding(args['max_task_num'] + 1, 20)
 
         #beam search
         self.scores = 0
@@ -107,10 +108,11 @@ class Decoder(nn.Module):
         return logits, h_out
 
     def tp_update_features \
-        (self, V, start_fea, last_step_index, idxs_select,  batch_size):
+        (self, V, start_fea, last_step_index, idxs_select,  batch_size, step):
+        step_embed = self.step_embed(torch.LongTensor([step] * start_fea.shape[0]).to(start_fea.device))
         last_step_loc = torch.gather(V.permute(1, 0, 2).contiguous(), 0, last_step_index.view(1, batch_size, 1).expand(1, batch_size, V.size()[2])).squeeze(0)
         current_step_loc = torch.gather(V.permute(1, 0, 2).contiguous(), 0, idxs_select.view(1, batch_size, 1).expand(1, batch_size, V.size()[2])).squeeze(0)
-        tp_input = torch.cat([last_step_loc, current_step_loc, start_fea, V.reshape(start_fea.shape[0], -1)], dim=1)
+        tp_input = torch.cat([last_step_loc, current_step_loc, start_fea, step_embed], dim=1) # 6 + 6 + 4 + 20
         return tp_input
 
     def rp_update_features\
@@ -130,7 +132,7 @@ class Decoder(nn.Module):
         return decoder_input.float(), context_update.float()
 
     def forward(self, decoder_input, hidden, V_reach_mask, start_idx, V_ft, b_E, net_TP,
-         b_E_abs, V, context_update, H_update, start_fea, context, mode):
+         b_E_abs, V, context_update, H_update, start_fea, context):
 
         batch_size = V_reach_mask.size()[0]
         output_prob = []
@@ -142,26 +144,20 @@ class Decoder(nn.Module):
         time_prediction = net_TP
         last_step_index = start_idx.long().clone()
 
- 
         pred_eta_list = []
-        for _ in steps:
+        for t in steps:
             hidden, log_p, probs, mask = self.recurrence(decoder_input, hidden, mask, idxs_select,context_update)
 
             _, idxs = probs.max(1)
 
-            if mode == 'teacher_force':
-                idxs_select = idxs
-
-            elif mode == 'greedy':
-                idxs_select = idxs
+            idxs_select = idxs
 
             tp_input = self.tp_update_features(V, start_fea, last_step_index, idxs_select,
-                                               batch_size)
+                                               batch_size, t)
             pred_time = time_prediction(tp_input)
 
             pred_eta_list.append(pred_time)
             decoder_input, context = self.rp_update_features( idxs_select,  H_update, b_E, batch_size, b_E_abs, context_update )
-
 
             last_step_index = idxs_select.clone()
 
@@ -197,19 +193,18 @@ class Attention(nn.Module):
             logits = u
         return e, logits
 
-
 class TimePrediction(nn.Module):
     def __init__(self, args = {}):
         super(TimePrediction, self).__init__()
 
-        self.wide_dim = 166
+        self.wide_dim = 36
 
         wide_field_dims = np.array([1] * self.wide_dim)
         wide_embed_dim = 20
-        wide_mlp_dims = (128, )
+        wide_mlp_dims = (64, )
 
-        deep_mlp_input_dim = 166
-        deep_mlp_dims = (128, )
+        deep_mlp_input_dim = 36
+        deep_mlp_dims = (64, )
         self.device = args['device']
 
         self.wide_embedding = FeaturesEmbedding(sum(wide_field_dims), wide_embed_dim)
@@ -219,7 +214,7 @@ class TimePrediction(nn.Module):
         )
         self.wide_mlp = MultiLayerPerceptron(wide_embed_dim, wide_mlp_dims)
         self.deep_mlp = MultiLayerPerceptron(deep_mlp_input_dim, deep_mlp_dims)
-        self.regressor = nn.Linear(128, 1)
+        self.regressor = nn.Linear(64, 1)
 
     def forward(self, input_features):
         wide_index = (torch.zeros([input_features.size()[0], self.wide_dim]) + torch.arange(0, self.wide_dim)).long().to(self.device)
@@ -330,7 +325,7 @@ class FDNet(nn.Module):
                decoder_input.reshape(B * T, self.d_h + self.d_update)
 
     def forward(self, V, E, V_ft, target_len, V_reach_mask, net_TP,
-                        start_idx, E_abs, E_mask, V_dispatch_mask, start_fea, mode):
+                        start_idx, E_abs, E_mask, V_dispatch_mask, start_fea):
 
         B, T, N = V_reach_mask.shape
 
@@ -350,25 +345,12 @@ class FDNet(nn.Module):
 
         t_mask = self.get_tp_mask(N, B * T, target_len.reshape(B * T))
 
+        (result_route_scores, result_route, td_pred, eta_pred) = \
+        self.decoder(decoder_input, hidden, V_reach_mask, start_idx.reshape(-1).float(),
+                          V_ft.squeeze(2), b_E, net_TP,
+                     b_E_abs, V, context_update, H_update.reshape(N, B*T, self.d_h), start_fea.reshape(B*T, -1), context)
 
-        if (mode == 'teacher_force'):
-
-            (result_route_scores, result_route, td_pred, eta_pred) = \
-            self.decoder(decoder_input, hidden, V_reach_mask, start_idx.reshape(-1).float(),
-                              V_ft.squeeze(2), b_E, net_TP,
-                         b_E_abs, V, context_update, H_update.reshape(N, B*T, self.d_h), start_fea.reshape(B*T, -1), context, mode)
-
-            return result_route_scores.exp(), result_route, td_pred * t_mask, eta_pred.squeeze(2) * t_mask, t_mask
-
-        elif (mode == 'greedy'):
-            (result_route_scores, result_route, td_pred, eta_pred) = \
-                self.decoder(decoder_input, hidden, V_reach_mask, start_idx.reshape(-1).float(),
-                              V_ft.squeeze(2), b_E, net_TP,
-                         b_E_abs, V, context_update, H_update.reshape(N, B*T, self.d_h), start_fea.reshape(B*T, -1), context, mode)
-
-            return result_route, eta_pred.squeeze(2) * t_mask
-        else:
-            raise Exception('please assign a prediction method: greedy or beam_search')
+        return result_route_scores.exp(), result_route, eta_pred.squeeze(2) * t_mask, t_mask
 
     def model_file_name(self):
         file_name = '+'.join([f'{k}-{self.args[k]}' for k in ['hidden_size']])
