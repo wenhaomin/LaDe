@@ -191,10 +191,7 @@ def main(params):
 
     route_predictor, save2file = get_model_function(params['model'])
     rp_model = route_predictor(params)
-    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_sh/sort_model/hidden_size$64+dataset$delivery_sh.route1702460279.4360569'
-    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_sh/sort_model/hidden_size$64+dataset$delivery_sh.route1702470023.6811574'
-    params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_yt/sort_model/hidden_size$64+dataset$delivery_yt.route1702463845.4940734'
-    # params['route_predictor_path'] = '/data/maodawei/LaDe-1212/data/dataset/ranketpa_route/delivery_cq/sort_model/hidden_size$64+dataset$delivery_cq.route1702519157.7561977'
+    params['route_predictor_path'] = ''
     rp_model_path = params['route_predictor_path']
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     if rp_model_path != '':
