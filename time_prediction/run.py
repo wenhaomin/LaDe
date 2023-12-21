@@ -12,7 +12,7 @@ def run(params):
         from algorithm.lgb.train import main
         main(params)
     if model == 'knn':
-        from algorithm.lgb.train import main
+        from algorithm.knn.train import main
         main(params)
     if model == 'mlp':
         from algorithm.mlp.train import main
