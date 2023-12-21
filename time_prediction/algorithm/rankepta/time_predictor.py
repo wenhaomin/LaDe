@@ -17,7 +17,7 @@ class MLP(torch.nn.Module):
                 layers.append(torch.nn.Dropout(p=dropout))
             input_dim = embed_dim
         if output_layer:
-            layers.append(torch.nn.Linear(input_dim, 1)) #输出N个节点的eta
+            layers.append(torch.nn.Linear(input_dim, 25)) #输出N个节点的eta
         self.mlp = torch.nn.Sequential(*layers)
 
     def forward(self, x):
@@ -52,8 +52,8 @@ def rnn_forwarder(rnn, embedded_inputs, input_lengths, batch_size):
         # Optionally, Sum bidirectional RNN outputs
         outputs = outputs[:, :, :rnn.hidden_size] + outputs[:, :, rnn.hidden_size:]
 
-    index2 = index - torch.tensor([1])  # 选取操作
-    index1 = torch.tensor(list(range(len(index2))))  # 生成第一维度
+    index2 = index - torch.tensor([1])
+    index1 = torch.tensor(list(range(len(index2))))
     return outputs[index1, index2, :]
 
 
@@ -98,24 +98,24 @@ class RankEPTA(nn.Module):
         self.pos_table = self.pos_table.to(self.device)
         # for sort_x embedding layer
         self.sort_x_embedding = nn.Linear(in_features=self.sort_x_size, out_features=self.hidden_size, bias=False)
-        self.mlp_eta = MLP(self.embed_dim  + args['hidden_size'] * 2 , (self.hidden_size,), dropout=0)
+        self.mlp_eta = MLP( args['max_task_num'] * self.sort_x_size + self.hidden_size + 4, (self.hidden_size,self.hidden_size,),dropout=0.1)
 
         self.todo_emb = nn.Sequential(nn.Linear(self.sort_x_size, self.sort_x_size//2),
                                       nn.LeakyReLU(),
                                       nn.Linear(self.sort_x_size //2, 1),
                                       nn.LeakyReLU()
                                       )
-
-
         # STattention-based PETA predictor
         self.transformer = TransformerEncoder(n_heads=self.n_head, node_dim=self.hidden_size+self.embed_dim,
                                               embed_dim=self.hidden_size, n_layers=self.number_layer, normalization='batch')
 
-        #prediction
         self.linear_eta = nn.Sequential(nn.Linear(in_features=2 * self.hidden_size + self.max_len + 1 + self.emb_dim,
                                                   out_features=(self.hidden_size + self.max_len + self.hidden_size) // 2, bias=False), nn.ELU(),
                                         nn.Linear(in_features=(self.hidden_size + self.max_len + self.hidden_size) // 2, out_features=32, bias=False), nn.ELU(),
                                         nn.Linear(in_features=32, out_features=1, bias=False), nn.ReLU())
+        self.out_project =  nn.Sequential(nn.Linear(in_features=args['max_task_num'] * self.hidden_size, out_features=self.hidden_size, bias=False),
+                                    nn.ReLU(),
+                                    nn.Linear(in_features=self.hidden_size, out_features=args['hidden_size'], bias=False))
 
     def get_att_mask(self, x):
         B, N = x.shape
@@ -125,23 +125,28 @@ class RankEPTA(nn.Module):
             att_mask[i] = x[i] * x[i].T
         return att_mask
 
-
-    def forward(self, V, V_reach_mask, sort_pos):
+    def forward(self, V, V_reach_mask, sort_pos, start_fea):
         B = V_reach_mask.size(0)
         T = V_reach_mask.size(1)
         N = V_reach_mask.size(2)
 
         order_info = sort_pos
         order_info = self.pos_table[order_info.long()].float()
+
         mask_index = V.reshape(-1, N, V.shape[-1])[:, :, 0] == 0
-        attn_mask = (~mask_index + 0).repeat_interleave(25).reshape(B*T, N, N)
-        sort_x_emb = self.sort_x_embedding(V.reshape(B*T, N, -1).float())  # (batch_size, max_seq_len, todo_emb_dim)
+        mask_indices = torch.nonzero(mask_index + 0)
+        attn_mask = (mask_index + 0).repeat_interleave(N).reshape(B*T, N, N).permute(0, 2, 1).contiguous()
+        attn_mask = attn_mask.to(V.device)
+        attn_mask[mask_indices[:, 0], mask_indices[:, 1], :] = 1
+
+        sort_x_emb = self.sort_x_embedding(V.reshape(B*T, N, -1).float())
+
         x = torch.cat([sort_x_emb, order_info.reshape(B*T,N,-1)], dim = 2)
         transformer_output, _ = self.transformer(x, attn_mask)
+        transformer_output = self.out_project(transformer_output.reshape(B*T, -1))
 
         # ETA final prediction
-        current_state = sort_x_emb
-        F_input = torch.cat([transformer_output, current_state, order_info.reshape(B*T,N,-1)], dim=2)
+        F_input = torch.cat([transformer_output, V.reshape(B*T, -1).float(), start_fea.reshape(B*T, -1).float()], dim=1)
         eta = self.mlp_eta(F_input)
 
         return eta
