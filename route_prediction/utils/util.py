@@ -354,20 +354,6 @@ def train_val_test(train_loader, val_loader, test_loader, model, device, process
     nni.report_final_result(test_result.to_dict()['krc'])
     return params
 
-def get_nonzeros_nrl(pred_steps, label_steps, label_len, pred_len, pad_value):
-    pred = []
-    label = []
-    label_len_list = []
-    pred_len_list = []
-    for i in range(pred_steps.size()[0]):
-        #only test the step when label != 0
-        if label_steps[i].min().item() != pad_value:
-            label.append(label_steps[i].cpu().numpy().tolist())
-            pred.append(pred_steps[i].cpu().numpy().tolist())
-            label_len_list.append(label_len[i].cpu().numpy().tolist())
-            pred_len_list.append(pred_len[i].cpu().numpy().tolist())
-    return torch.LongTensor(pred), torch.LongTensor(label),\
-           torch.LongTensor(label_len_list), torch.LongTensor(pred_len_list)
 
 def get_nonzeros_eta(pred_steps, label_steps, label_len, pred_len, eta_pred, eta_label, pad_value):
     pred = []
