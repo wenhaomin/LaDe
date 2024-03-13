@@ -71,6 +71,79 @@ class EarlyStop():
             return self.metric_lst[self.best_epoch]
 
 
+def calc_reinforce_rewards(prediction, label, label_len, params):
+    def tensor2lst(x):
+            try:
+                return x.cpu().numpy().tolist()
+            except:
+                return x
+
+    from utils.eval import kendall_rank_correlation, location_deviation, route_acc
+
+    def filter_len(prediction, label, label_len):
+        len_range = [1, params['max_task_num']]
+        pred_f = []
+        label_f = []
+        label_len_f = []
+        for i in range(len(label_len)):
+            if len_range[0] <= label_len[i] <= len_range[1]:
+                pred_f.append(prediction[i])
+                label_f.append(label[i])
+                label_len_f.append(label_len[i])
+        return pred_f, label_f, label_len_f
+
+    prediction, label, label_len = [tensor2lst(x) for x in [prediction, label, label_len]]
+    prediction, label, label_len = filter_len(prediction, label, label_len)
+    pred = []
+    for p in prediction:
+        input = set([x for x in p if x < len(prediction[0]) - 1])
+        tmp = list(filter(lambda pi: pi in input, p))
+        pred.append(tmp)
+    r_krc = np.array([kendall_rank_correlation(pre, lab, lab_len) for pre, lab, lab_len in zip(pred, label, label_len)])
+    r_lsd = np.array([location_deviation(pre, lab, lab_len, 'square') for pre, lab, lab_len in zip(pred, label, label_len)]) #越小越好
+    r_acc_3 = np.array([route_acc(pre, lab[:lab_len], 2 + 1) for pre, lab, lab_len in zip(pred, label, label_len)])
+
+    return r_krc, r_lsd, r_acc_3
+
+def get_reinforce_samples(pred_steps, greedy_pred_steps, label_steps, label_len, pad_value, rl_log_probs, pred_len_steps):
+    pred = []
+    greedy_pred = []
+    label = []
+    label_len_list = []
+    rl_log_probs_list = []
+    pred_lens = []
+    for i in range(pred_steps.size()[0]):
+        if label_steps[i].min().item() != pad_value:
+            label.append(label_steps[i].cpu().numpy().tolist())
+            pred.append(pred_steps[i].cpu().numpy().tolist())
+            greedy_pred.append(greedy_pred_steps[i].cpu().numpy().tolist())
+            label_len_list.append(label_len[i].cpu().numpy().tolist())
+            rl_log_probs_list.append(rl_log_probs[i])
+            pred_lens.append(pred_len_steps[i].cpu().numpy().tolist())
+    return torch.LongTensor(pred), torch.LongTensor(greedy_pred), torch.LongTensor(label), \
+           torch.LongTensor(label_len_list), torch.stack(rl_log_probs_list), torch.LongTensor(pred_lens).to(pred_steps.device)
+
+def get_log_prob_mask(pred_len, params):
+    log_prob_mask = torch.zeros([pred_len.shape[0], params['max_task_num']]).to(pred_len.device)
+    for i in range(len(pred_len)):
+        valid_len = pred_len[i].long().item()
+        log_prob_mask[i][:valid_len] = 1
+    return log_prob_mask
+
+def get_nonzeros_nrl(pred_steps, label_steps, label_len, pred_len, pad_value):
+    pred = []
+    label = []
+    label_len_list = []
+    pred_len_list = []
+    for i in range(pred_steps.size()[0]):
+        if label_steps[i].min().item() != pad_value:
+            label.append(label_steps[i].cpu().numpy().tolist())
+            pred.append(pred_steps[i].cpu().numpy().tolist())
+            label_len_list.append(label_len[i].cpu().numpy().tolist())
+            pred_len_list.append(pred_len[i].cpu().numpy().tolist())
+    return torch.LongTensor(pred), torch.LongTensor(label),\
+           torch.LongTensor(label_len_list), torch.LongTensor(pred_len_list)
+
 def batch_file_name(file_dir, suffix='.train'):
     L = []
     for root, dirs, files in os.walk(file_dir):
@@ -321,7 +394,6 @@ def get_nonzeros_eta(pred_steps, label_steps, label_len, pred_len, eta_pred, eta
 
 def get_model_function(model):
 
-    # models for logistics pick-up service
     if model == "deeproute":
         from algorithm.deeproute.DeepRoute import DeepRoute, save2file
         return (DeepRoute, save2file)
@@ -331,6 +403,18 @@ def get_model_function(model):
     elif model == 'graph2route':
         from algorithm.graph2route.Graph2Route import Graph2Route_pickup, save2file
         return (Graph2Route_pickup, save2file)
+    elif model == 'cproute':
+        from algorithm.cproute.CPRoute import CPRoute, save2file
+        return (CPRoute, save2file)
+    elif model == 'm2g4rtp_pickup':
+        from algorithm.m2g4rtp_pickup.m2g4rtp import M2G4RTP, save2file
+        return (M2G4RTP, save2file)
+    elif model == 'm2g4rtp_delivery':
+        from algorithm.m2g4rtp_delivery.m2g4rtp import M2G4RTP, save2file
+        return (M2G4RTP, save2file)
+    elif model == 'drl4route':
+        from algorithm.drl4route.Actor import RoutePredictionAgent, save2file
+        return (RoutePredictionAgent, save2file)
     else:
         raise  NotImplementedError
 
