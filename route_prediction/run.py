@@ -7,7 +7,7 @@ def run(params):
     pprint(params)
     model = params['model']
     # for route prediction task
-    if model in ['Distance-Greedy', 'Time-Greedy', 'Or-Tools']:
+      if model in ['Distance-Greedy', 'Time-Greedy', 'Or-Tools']:
         from algorithm.basic.basic_model import main
         main(params)
     if model == 'fdnet':
@@ -22,7 +22,15 @@ def run(params):
     if model == 'graph2route':
         from algorithm.graph2route.train import main
         main(params)
-
+    if model == 'cproute':
+        from algorithm.cproute.train import main
+        main(params)
+    if model == 'm2g4rtp_pickup':
+        from algorithm.m2g4rtp_pickup.train import main
+        main(params)
+    if model == 'drl4route':
+        from algorithm.drl4route.train import main
+        main(params)
 def get_params():
     parser = get_common_params()
     args, _ = parser.parse_known_args()
@@ -46,7 +54,15 @@ if __name__ == "__main__":
                 osqure_params = dict_merge([params, osqure_params])
                 args_lst.append(osqure_params)
 
-        if model in ['deeproute',  'fdnet']:
+        if model in ['drl4route']:
+            for hs in [64, 32]:
+                for rl_r in [0.2, 0.4, 0.6, 0.8, 1]:
+                    for dataset in datasets:
+                        dl_params = {'model': model, 'hidden_size': hs, 'dataset': dataset,  'rl_ratio':rl_r}
+                        dl_params = dict_merge([params, dl_params])
+                        args_lst.append(dl_params)
+
+        if model in ['deeproute',  'fdnet', 'cproute', 'm2g4rtp',  'm2g4rtp_pickup']:
             for hs in [32, 64]:
                 for dataset in datasets:
                     deeproute_params = {'model': model, 'hidden_size': hs, 'dataset': dataset}
