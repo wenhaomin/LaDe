@@ -611,9 +611,9 @@ def get_params():
 
     parser = argparse.ArgumentParser()
     # dataset parameters
-    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/pickup_cq_0301/')
+    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/pickup_cq/')
     parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw_data/pickup/pickup_cq.csv')
-    parser.add_argument('--data_name', type=str, default='pickup_cq_0310_aoi_steps')
+    parser.add_argument('--data_name', type=str, default='pickup_cq')
     parser.add_argument('--num_thread', type=int, default=20)
     parser.add_argument('--random_seed', type=int, default=1)
 
