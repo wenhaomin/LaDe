@@ -530,9 +530,9 @@ class DeliveryDataset(object):
 def get_params():
     parser = argparse.ArgumentParser()
     # dataset parameters
-    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_yt_aoi/')
+    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/delivery_yt/')
     parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw_data/delivery/delivery_yt.csv')
-    parser.add_argument('--data_name', type=str, default='delivery_yt_aoi')
+    parser.add_argument('--data_name', type=str, default='delivery_yt')
     parser.add_argument('--num_thread', type=int, default=20)
     parser.add_argument('--random_seed', type=int, default=1)
     parser.add_argument('--is_test', type=str, default=False)
