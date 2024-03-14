@@ -26,6 +26,9 @@ def run(params):
     if model == 'fdnet':
         from algorithm.fdnet.train import main
         main(params)
+    if model == 'm2g4rtp_delivery':
+        from algorithm.m2g4rtp_delivery.train import main
+        main(params)
 
 def get_params():
     parser = get_common_params()
@@ -44,7 +47,7 @@ if __name__ == "__main__":
                 basic_params = dict_merge([params, {'model': model,'dataset': dataset}])
                 args_lst.append(basic_params)
 
-        if model in ['mlp', 'ranketpa_route', 'ranketpa_time', 'fdnet']:
+        if model in ['mlp', 'ranketpa_route', 'ranketpa_time', 'm2g4rtp_delivery', 'fdnet']:
             for hs in [64, 64, 64]:
                 for dataset in datasets:
                     deeproute_params = {'model': model, 'hidden_size': hs, 'dataset': dataset}
