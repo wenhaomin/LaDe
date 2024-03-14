@@ -1,17 +1,18 @@
 # -*- coding: utf-8 -*-
-import sys, os, platform
+import random
+import os
 import pandas as pd
 import numpy as np
 from geopy.distance import geodesic
 from tqdm import tqdm
 from utils.util import ws, dir_check
-from data.preprocess import pre_process, split_trajectory, list2str
+from data.preprocess_pickup import pre_process, split_trajectory, list2str
 import argparse
+import copy
 
 def idx(df, col_name):
     _idx_ = list(df.columns).index(col_name)
     return _idx_
-
 
 np.random.seed(1)
 
@@ -25,6 +26,22 @@ class PickupDataset(object):
         self.mode = params['mode']
         self.data = defaultdict(list)
         self.dic_dis_cal = {}
+        self.aoi_len = params['aoi_len']
+
+    def get_aoi_index(self, unpick_fea, unpick_len, aoi_fea, aoi_len):
+        aoi_index = []
+        if int(unpick_len) == 0:
+            aoi_index += [0] * (self.N - int(unpick_len))
+        else:
+            for i in range(int(unpick_len)):
+                aoi = int(unpick_fea[i][0])  # aoi index
+                idx = 0
+                for idx in range(int(aoi_len)):
+                    if aoi == int(aoi_fea[idx][0]):
+                        break
+                aoi_index.append(idx)
+            aoi_index += [0] * (self.N - int(len(aoi_index)))
+        return aoi_index
 
     def dis_cal(self, lat1, lng1, lat2, lng2):
         # distance cache
@@ -68,19 +85,35 @@ class PickupDataset(object):
         E_dt_dif = np.zeros([self.N, self.N])  # edge feature, difference of promised pick-up time
         E_pt_dif = np.zeros([self.N, self.N])  # edge feature, difference of dispatch time
         A = np.zeros([self.T, self.N, self.N])  # k-nearest st
+        V_non_neighbor = np.full([self.T, self.N, self.N], self.N - 1)
+        first_node = np.zeros( [self.T, self.params['first_node_fea_dim']])  # features at start node: (dt, lng, lat, pt_last, ft)
 
         route_label = np.full([self.T, self.N], self.N - 1)  # label of route prediction for each step
         time_label = np.zeros([self.T, self.N])  # arrival time of nodes
         route_label_len = np.zeros([self.T])  # number of valid label nodes for each step
+        route_label_all = np.full([self.T, self.N], self.N - 1)
+        eta_label_len =  np.zeros([self.T]) ## new
         t_interval = np.zeros([self.T, self.N])  # label: time difference
 
         start_fea = np.zeros([self.T, self.params['start_node_fea_dim']])  # features at start node: (dt, lng, lat, pt_last, ft)
         start_idx = np.zeros([self.T])  # index of start node
         past_x = np.zeros([self.T, self.params['done_node_num'], self.params['done_node_fea_dim']])  # The features of the previous [done_node_num]-packages of each step
-        cou_fea = list(np.array(self.df_cou.loc[self.df_cou['id'] == c_v[0][self.idx_courier_id]]).reshape(-1)[[0, 2, 3, 4, 5, 6]])  # (id, work_days)
+        cou_fea = list(np.array(self.df_cou.loc[self.df_cou['id'] == c_v[0][self.idx_courier_id]]).reshape(-1)[[0, 2, 3, 4, 5, 6, 7, 8, 9]])
+
+        # aoi feature
+        aoi_node_feature = np.zeros([self.T, self.N, 5])
+
+        #aoi feature steps
+        aoi_feature_steps = np.zeros([self.T, self.aoi_len, self.params['aoi_fea_len']])
+        aoi_start_steps = np.zeros([self.T, self.params['aoi_start_fea_len']])
+        aoi_eta_steps = np.zeros([self.T, self.aoi_len])
+        aoi_pos_steps = np.full([self.T, self.aoi_len], self.aoi_len - 1)
+        aoi_len_steps = np.zeros([self.T])
+        aoi_idx_steps = np.full([self.T, self.aoi_len], self.aoi_len - 1)
+        aoi_index_steps = np.zeros([self.T, self.N])
 
         sample_valid_task = []
-        t = 0  # the current step
+        t = 0
         for start in range(len(c_v)):  # time steps are decided by finish time
             if t == self.T:
                 continue
@@ -141,9 +174,8 @@ class PickupDataset(object):
                 unfinished_task.append(cou[cou['index'] == task]['order_id'].iloc[0])
 
             V_dispatch_mask[[x for x in range(t, self.T)], shuffled_list.index(c_v[:, self.idx_order_id][start])] = 1  # The start node is considered as accepted
-
-
             current_time = c_v[start][self.idx_finish_time]  # the time of the current step
+
             # find the most closed accept_time to current_time
             close_time_dif = np.inf
             close_accept_time = np.inf
@@ -154,16 +186,110 @@ class PickupDataset(object):
                     close_accept_time = accept_t
 
             # For label construction, remove package which is influenced by new comming packages, i.e., got_time < close_accept_time
+            todo_rank_ = copy.deepcopy(todo_rank)
             if close_accept_time != np.inf:
                 todo_rank = list(filter(lambda k: c_v[k - id_first][self.idx_finish_time] <= close_accept_time, todo_rank))
 
             for task in todo_rank:
-                task_idx = task - id_first
                 route_label[t, todo_rank.index(task)] = shuffled_list.index(task)
-                t_interval[t, todo_rank.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[task_idx - 1][self.idx_finish_time]
-                label_task.append(cou[cou['index'] ==task]['order_id'].iloc[0])
-                time_label[t, todo_rank.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[start][self.idx_finish_time]
+                label_task.append(cou[cou['index'] == task]['order_id'].iloc[0])
+
+            ##### This part is to make aoi information used only in m2g4rtp
+            now_lng = c_v[start][self.idx_longitude]
+            now_lat = c_v[start][self.idx_latitude]
+            aoi_start_idx = self.aoi_dict[c_v[start][self.idx_aoi]]
+            aoi_start_feature = self.aoi_feature[aoi_start_idx][:4]
+
+            if len(todo_rank) <= self.N_min:
+                aoi_fea = [[0 for _ in range(self.params['aoi_fea_len'])]] * self.aoi_len
+                aoi_eta = [0 for _ in range(self.aoi_len)]
+                aoi_len = 0
+                aoi_idx = [-1 for _ in range(self.aoi_len)]
+                aoi_pos = [-1 for _ in range(self.aoi_len)]
+                aoi_start_feature = [0 for _ in range(self.params['aoi_start_fea_len'])]
+            else:
+                last_aoi = self.aoi_dict[cou[cou['index'] == todo_rank[0]]['aoi_id'].iloc[0]]  # aoi index of the first unfinished task
+                last_aoi_feature = self.aoi_feature[last_aoi]
+                aoi_set = {last_aoi}
+                aoi_sum = 1
+                aoi_fea = []
+                aoi_eta = [c_v[todo_rank[0] - id_first][self.idx_finish_time] - c_v[start][self.idx_finish_time]]
+
+                for i in range(1, len(todo_rank)):
+                    aoi = self.aoi_dict[cou[cou['index'] == todo_rank[i]]['aoi_id'].iloc[0]]
+                    aoi_type = self.aoi_feature[aoi][1]
+                    if aoi == last_aoi:
+                        aoi_sum += 1
+                        if i == len(todo_rank) - 1:
+                            aoi_lng = self.aoi_feature[aoi][2]
+                            aoi_lat = self.aoi_feature[aoi][3]
+                            aoi_dis = self.dis_cal(now_lat, now_lng, aoi_lat, aoi_lng)
+                            aoi_fea.append([aoi, aoi_type, aoi_lng, aoi_lat, aoi_dis, aoi_sum])
+                        continue
+                    if aoi in aoi_set:
+                        aoi_lng = last_aoi_feature[2]
+                        aoi_lat = last_aoi_feature[3]
+                        aoi_dis = self.dis_cal(now_lat, now_lng, aoi_lat, aoi_lng)
+                        aoi_fea.append([last_aoi, last_aoi_feature[1], aoi_lng, aoi_lat, aoi_dis, aoi_sum])
+                        break
+
+                    aoi_lng = self.aoi_feature[last_aoi][2]
+                    aoi_lat = self.aoi_feature[last_aoi][3]
+                    aoi_dis = self.dis_cal(now_lat, now_lng, aoi_lat, aoi_lng)
+                    last_aoi = aoi
+                    last_aoi_feature = self.aoi_feature[last_aoi]
+                    aoi_set.add(aoi)
+                    aoi_sum = 1
+                    aoi_fea.append([last_aoi, last_aoi_feature[1], aoi_lng, aoi_lat, aoi_dis, aoi_sum])
+                    aoi_eta.append(
+                        c_v[todo_rank[i] - id_first][self.idx_finish_time] - c_v[start][self.idx_finish_time])
+                    if i == len(todo_rank) - 1:
+                        aoi_type = self.aoi_feature[aoi][1]
+                        aoi_lng = self.aoi_feature[aoi][2]
+                        aoi_lat = self.aoi_feature[aoi][3]
+                        aoi_dis = self.dis_cal(now_lat, now_lng, aoi_lat, aoi_lng)
+                        aoi_fea.append([aoi, aoi_type, aoi_lng, aoi_lat, aoi_dis, aoi_sum])
+
+                aoi_len = len(aoi_set)
+                if aoi_len <= 1 or aoi_len > self.aoi_len:
+                    aoi_fea, aoi_eta, aoi_len, aoi_idx, aoi_pos, aoi_start = 0, 0, 0, 0, 0, 0
+
+                if aoi_fea == 0:
+                    aoi_fea = [0 for _ in range(self.params['aoi_fea_len'])] * self.aoi_len
+                    aoi_eta = [-1 for _ in range(self.aoi_len)]
+                    aoi_len = 0
+                    aoi_idx = [-1 for _ in range(self.aoi_len)]
+                    aoi_pos = [-1 for _ in range(self.aoi_len)]
+                    aoi_start_feature = [0 for _ in range(self.params['aoi_start_fea_len'])]
+                    aoi_index = [0 for _ in range(self.N)]
+                else:
+                    aoi_pos = [i for i in range(aoi_len)]
+                    random.shuffle(aoi_pos)
+                    aoi_fea = np.array(aoi_fea)[aoi_pos].tolist()
+                    aoi_eta = np.array(aoi_eta)[aoi_pos].tolist()
+                    aoi_idx = np.argsort(aoi_eta).tolist()
+                    for _ in range(self.aoi_len - aoi_len):
+                        aoi_fea.append([0 for _ in range(self.params['aoi_fea_len'])])
+                    aoi_idx += [self.aoi_len - aoi_len for _ in range(self.aoi_len - aoi_len)]
+                    aoi_pos += [-1 for _ in range(self.aoi_len - aoi_len)]
+                    aoi_eta += [-1 for _ in range(self.aoi_len - aoi_len)]
+
+            aoi_feature_steps[t, :, :] = aoi_fea
+            aoi_eta_steps[t, :] = aoi_eta
+            aoi_idx_steps[t, :] = aoi_idx
+            aoi_len_steps[t] = aoi_len
+            aoi_pos_steps[t, :] = aoi_pos
+            aoi_start_steps[t, :] = aoi_start_feature
+            ##### The above part is to make aoi information used only in m2g4rtp
+
+            for task in todo_rank_:
+                task_idx = task - id_first
+                t_interval[t, todo_rank_.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[task_idx - 1][self.idx_finish_time]
+                time_label[t, todo_rank_.index(task)] = c_v[task_idx][self.idx_finish_time] - c_v[start][self.idx_finish_time]
+                route_label_all[t, todo_rank_.index(task)] = shuffled_list.index(task)
+
             route_label_len[t] = len(todo_rank)
+            eta_label_len[t] = len(todo_rank_)
             # For test set construction
             courier_id.append(cou['courier_id'].iloc[0])
 
@@ -213,8 +339,18 @@ class PickupDataset(object):
                 V_ft[t, idx] = c_v[c_idx][self.idx_finish_time]
                 V_pt[t, idx] = c_v[c_idx][self.idx_promised_time]
 
+                # aoi图的节点
+                aoi_node_feature[t, idx, :] = self.aoi_feature[self.aoi_dict[c_v[c_idx][self.idx_aoi]]]
+
+                # aoi index
+            if aoi_fea != 0:
+                aoi_index = self.get_aoi_index(aoi_node_feature[t], route_label_len[t], aoi_feature_steps[t], aoi_len_steps[t])
+            aoi_index_steps[t] = aoi_index
+
+
             # get feature of start node, accept_time, lng, lat, pt, ft
             start_fea[t, :] = c_v[start][[self.idx_accept_time, self.idx_longitude, self.idx_latitude, self.idx_promised_time, self.idx_finish_time]]
+            first_node[t, :] = c_v[start][[self.idx_accept_time, self.idx_longitude, self.idx_latitude, self.idx_type_code, 0, 0,self.idx_promised_time - self.idx_accept_time, self.idx_promised_time - self.idx_finish_time]]
             start_idx[t] = shuffled_list.index(c_v[:, self.idx_order_id][start])
             query_time.append(c_v[start][self.idx_abs_got_time])
             start_order_id.append(c_v[start][self.idx_original_order_id])
@@ -279,7 +415,7 @@ class PickupDataset(object):
                                 A[t][i][j] = 1
                             else:
                                 A[t][i][j] = -1
-
+        A_ = copy.deepcopy(A)
         for t in range(self.T):
             for i in range(self.N):
                 if len(np.argwhere(A[t][i] == 1).reshape(-1)) < 5:
@@ -289,6 +425,26 @@ class PickupDataset(object):
                 time_from_i = E_pt_dif[i] * A[t][i]
                 remove_time_idx = np.argsort(abs(time_from_i))[-1]
                 A[t][i][[remove_dis_idx, remove_time_idx]] = 0
+
+        for t in range(self.T):
+            for i in range(self.N):
+                if len(np.argwhere(A_[t][i] == 1).reshape(-1)) < 5:
+                    continue
+                valid_index = (np.argwhere(A_[t][i] == 1).reshape(-1)).tolist()  # 可达节点索引
+                dis_from_i = E_abs_dis[i] * A_[t][i]
+                sorted_idx = np.argsort(abs(np.array(dis_from_i))).tolist()
+                for j in range(len(dis_from_i)):
+                    if j not in valid_index:
+                        dis_from_i[j] = 99999
+                if 6 <= len(np.argwhere(A_[t][i] == 1).reshape(-1)) <= 7:
+                    non_neighbor_idx = [x for x in sorted_idx if x in valid_index][len(valid_index) - 1:]
+                elif 7 < len(np.argwhere(A_[t][i] == 1).reshape(-1)) <= 9:
+                    non_neighbor_idx = [x for x in sorted_idx if x in valid_index][len(valid_index) - 3:]
+                else:
+                    non_neighbor_idx = [x for x in sorted_idx if x in valid_index][len(valid_index) - 4:]
+
+                num_non_neighbor_idx = len(non_neighbor_idx)
+                V_non_neighbor[t, i, 0:num_non_neighbor_idx] = non_neighbor_idx
 
         #concatenate edge feature
         E_fea_lst = [np.expand_dims(x, axis=-1) for x in [E_abs_dis, E_rel_dis, E_pt_dif, E_dt_dif]]
@@ -300,7 +456,9 @@ class PickupDataset(object):
                 'past_x': past_x, 'cou_fea': cou_fea,
                 'route_label': route_label, 'time_label': time_label, 'label_len': route_label_len,  't_interval': t_interval,
                 'courier_id': courier_id_list, 'query_time': query_time_list, 'unfinished_task': unfinished_task_list,
-                'label_task': label_task_list, 'start_task': start_order_id_list}
+                'label_task': label_task_list, 'start_task': start_order_id_list, 'eta_label_len': eta_label_len, 'route_label_all': route_label_all,
+                'V_non_neighbor': V_non_neighbor, 'first_node': first_node, 'aoi_node_feature': aoi_node_feature, 'aoi_feature_steps': aoi_feature_steps,
+                'aoi_start_steps': aoi_start_steps, 'aoi_eta_steps': aoi_eta_steps, 'aoi_pos_steps': aoi_pos_steps, 'aoi_len_steps': aoi_len_steps, 'aoi_idx_steps': aoi_idx_steps, 'aoi_index_steps': aoi_index_steps }
 
     def results_merge(self, results):
         """
@@ -332,7 +490,9 @@ class PickupDataset(object):
                       'E_mask', 'A', 'E_static_fea', # edge related information
                       'start_fea', 'start_idx', # start node information,
                       'past_x', 'cou_fea', # past task, and courier's feature
-                      'route_label', 'time_label', 'label_len', 't_interval' ]  #label information,
+                      'route_label', 'time_label', 'label_len', 't_interval',  'eta_label_len',
+                       'route_label_all', 'V_non_neighbor', 'first_node', 'aoi_node_feature',
+                       'aoi_feature_steps', 'aoi_start_steps', 'aoi_eta_steps', 'aoi_pos_steps', 'aoi_len_steps', 'aoi_idx_steps', 'aoi_index_steps']  #label information,
 
         for r in all_result:
             for f in feature_lst:
@@ -390,13 +550,19 @@ class PickupDataset(object):
     def get_data(self):
         if os.path.exists(self.params['fin_temp']):
 
-            self.df = pd.read_csv(self.params['fin_temp'] + "/package_feature.csv", sep=',', encoding='utf-8')  # package features
-            self.df_cou = pd.read_csv(self.params['fin_temp'] + "/courier_feature.csv", sep=',', encoding='utf-8')  # courier features
+            self.df = pd.read_csv(self.params['fin_temp'] + "/package_feature.csv", sep=',', encoding='utf-8')
+            self.df_cou = pd.read_csv(self.params['fin_temp'] + "/courier_feature.csv", sep=',', encoding='utf-8')
         else:
             self.df, self.df_cou = pre_process(fin=self.params['fin_original'], fout=self.params['fin_temp'], is_test=self.params['is_test'])
+        # 引入AOI全图的节点和边特征作为全局变量
+        data_path = self.params['fin_temp'] + "/aoi_feature.npy"
+        data = np.load(data_path, allow_pickle=True).item()
+        self.aoi_dict = data["aoi_dict"]
+        self.aoi_feature = data["aoi_feature"]
+        self.aoi_time_adj = data["aoi_time_adj"]
+        self.aoi_fre_adj = data["aoi_frequency_adj"]
         # feature index in the dataframe
         self.idx_order_id = idx(self.df, 'index')
-        # self.idx_block_id = idx(self.df, 'region_id')
         self.idx_courier_id = idx(self.df, 'courier_id')
         self.idx_todo_task_num = idx(self.df, 'todo_task_num')
         self.idx_todo_task = idx(self.df, 'todo_task')
@@ -406,6 +572,7 @@ class PickupDataset(object):
         self.idx_longitude = idx(self.df, 'lng')
         self.idx_latitude = idx(self.df, 'lat')
         self.idx_type_code = idx(self.df, 'aoi_type')
+        self.idx_aoi = idx(self.df, "aoi_id")
         self.idx_courier_distance = idx(self.df, 'dis_avg_day')
         self.idx_relative_dis_to_last_package = idx(self.df, 'relative_dis_to_last_package')
         self.idx_dis_to_last_package = idx(self.df, 'dis_to_last_package')
@@ -444,22 +611,24 @@ def get_params():
 
     parser = argparse.ArgumentParser()
     # dataset parameters
-    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/pickup_yt_0614/')
-    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw/pickup/pickup_yt.csv') # 没有经过data_convert的原始文件
-    parser.add_argument('--data_name', type=str, default='pickup_yt_0614_dataset_change')
+    parser.add_argument('--fin_temp', type=str, default=ws + '/data/tmp/pickup_cq_0301/')
+    parser.add_argument('--fin_original',  type=str, default=ws + '/data/raw_data/pickup/pickup_cq.csv')
+    parser.add_argument('--data_name', type=str, default='pickup_cq_0310_aoi_steps')
     parser.add_argument('--num_thread', type=int, default=20)
     parser.add_argument('--random_seed', type=int, default=1)
 
     parser.add_argument('--is_test', type=str, default=False)
-    # parser.add_argument('--block', type=dict, default={0}, help='0 means selecting all blocks, or specify other blocks')
     parser.add_argument('--label_range', type=tuple, default=(0, 120))
     parser.add_argument('--len_range', type=tuple, default=(2, 25))
     parser.add_argument('--T', type=int, default=12, help='the max number of valid time step in a sample')
+    parser.add_argument('--aoi_len', type=int, default=10, help='the length of aoi sequence')
     parser.add_argument('--todo_node_fea_dim', type=int, default=8, help='feature number for each unfinished task node')
     parser.add_argument('--start_node_fea_dim', type=int, default=5, help='feature number for start node')
     parser.add_argument('--done_node_fea_dim', type=int, default=9, help='feature number for each finished node')
     parser.add_argument('--done_node_num', type=int, default=3, help='the number of last finished nodes')
-
+    parser.add_argument('--first_node_fea_dim', type=int, default=8, help='feature number for first node')
+    parser.add_argument('--aoi_fea_len', type=int, default=6, help='number of aoi features')
+    parser.add_argument('--aoi_start_fea_len', type=int, default=4, help='number of aoi start features')
     # data split, according to date
     parser.add_argument('--train_ratio', type=float, default=0.6)
     parser.add_argument('--val_ratio', type=float, default=0.2)
@@ -468,12 +637,12 @@ def get_params():
     return args
 
 
-def main(params):
-    # params = vars(get_params())
+def main():
+    params = vars(get_params())
     if params['is_test']: params['data_name'] += '_test'
     data_name = params['data_name']
 
-    for mode in ['train', 'val', 'test']:  # 'train', 'val', 'test', 'train', 'val',
+    for mode in ['train', 'val', 'test']:
         if mode == 'train':
             fout = ws + f'/data/dataset/{data_name}/train.npy'
             dir_check(fout)
@@ -502,8 +671,4 @@ def main(params):
 if __name__ == "__main__":
 
     params = vars(get_params())
-    main(params)
-
-
-
-
+    main()
