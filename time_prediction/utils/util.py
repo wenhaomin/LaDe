@@ -264,6 +264,9 @@ def get_model_function(model):
     model_dict['ranketpa_time'] = (ranketpa_route.PointNet, ranketpa_route.save2file)
     import algorithm.mlp.mlp as mlp
     model_dict['mlp'] = (mlp.MLP_ETA, mlp.save2file)
+    from algorithm.m2g4rtp_delivery.m2g4rtp import M2G4RTP, save2file
+    model_dict['m2g4rtp_delivery'] = (M2G4RTP, save2file)
+    
     model, save2file = model_dict[model]
     return model, save2file
 
