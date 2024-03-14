@@ -50,7 +50,6 @@ def check_adjacent_speed(speed_index):
     keep_index.extend([True])
     return keep_index
 
-
 def drop_abnormal_gps_kernel(args: dict):
     c_lst = args['c_lst']
     result = {}
@@ -64,6 +63,13 @@ def drop_abnormal_gps_kernel(args: dict):
             result[o_id] = is_keep
     return result
 
+def reindex(dic):
+    idx = 0
+    map_dic = {}
+    for k in dic.keys():
+        map_dic[k] = idx
+        idx += 1
+    return map_dic
 
 def drop_unnormal(df, fout):
 
@@ -160,7 +166,6 @@ def get_todo_kernel(args: dict):
         c_v = c_v.apply(lambda x: get_a_todo(x), axis=1)
     return result
 
-
 def courier_info(df):
     """
     get courier's feature
@@ -193,7 +198,6 @@ def courier_info(df):
         feature_dict['dis_avg_order'][c] = np.mean(c_df['dis_to_last_package'])
         feature_dict['speed_avg_order'][c] = feature_dict['dis_sum'][c] / (sum(c_df['time_to_last_package'])) if sum(c_df['time_to_last_package']) != 0 else 5
     return couriers, feature_dict
-
 
 def process_traj_kernel(args ={}):
     # process a trajectory of a courier
@@ -244,6 +248,64 @@ name_dict = {
         'expect_got_time': 'time_window_end'
     }
 
+def make_aoi_dict(fin_temp):
+    print('start make aoi dict')
+    df = pd.read_csv(fin_temp + "/package_feature.csv", sep=',', encoding='utf-8')  # package features
+    aois = df['aoi_id'].value_counts().to_dict()
+    aoi_dict = reindex(aois)
+    df['aoi_id'] = df['aoi_id'].apply(lambda x: aoi_dict[x])
+
+    courier_l = split_trajectory(df)
+
+    aoi_nums = df["aoi_id"].nunique()
+    aoi_frequency_adj = np.zeros([aoi_nums, aoi_nums])
+    aoi_time_adj = np.zeros([aoi_nums, aoi_nums])
+    aoi_order_num = np.zeros([aoi_nums])
+    aoi_type = np.zeros([aoi_nums])
+    aoi_actime = np.zeros([aoi_nums])
+    aoi_lng = np.zeros([aoi_nums])
+    aoi_lat = np.zeros([aoi_nums])
+    pbar = tqdm(total=len(courier_l))
+
+    for i in range(len(courier_l)):
+        pbar.update(1)
+        for j in range(len(courier_l[i])):
+            aoi = courier_l[i].iloc[j]["aoi_id"]
+            aoi_order_num[aoi] += 1
+            aoi_type[aoi] = courier_l[i].iloc[j]["aoi_type"]
+            aoi_actime[aoi] += courier_l[i].iloc[j]["time_to_last_package"]
+            aoi_lng[aoi] += courier_l[i].iloc[j]["lng"]
+            aoi_lat[aoi] += courier_l[i].iloc[j]["lat"]
+            if j != 0:
+                from_aoi = courier_l[i].iloc[j - 1]["aoi_id"]
+                to_aoi = courier_l[i].iloc[j]["aoi_id"]
+                aoi_frequency_adj[from_aoi][to_aoi] += 1
+                aoi_time_adj[from_aoi][to_aoi] = aoi_time_adj[from_aoi][to_aoi] + courier_l[i].iloc[j]["time_to_last_package"]
+    aoi_frequency_adj[aoi_frequency_adj == 0] = 1
+    aoi_time_adj = np.divide(aoi_time_adj, aoi_frequency_adj)
+    aoi_actime = np.divide(aoi_actime, aoi_order_num)
+    aoi_lng = np.divide(aoi_lng, aoi_order_num)
+    aoi_lat = np.divide(aoi_lat, aoi_order_num)
+
+    aoi_feature = np.zeros([aoi_nums, 5])
+    for i in tqdm(range(aoi_nums)):
+        aoi_feature[i][0] = i
+        aoi_feature[i][1] = aoi_type[i]
+        aoi_feature[i][2] = aoi_lng[i]
+        aoi_feature[i][3] = aoi_lat[i]
+        aoi_feature[i][4] = aoi_actime[i]
+
+    data = {
+        "aoi_dict": aoi_dict,
+        "aoi_feature": aoi_feature,
+        "aoi_time_adj": aoi_time_adj,
+        "aoi_frequency_adj": aoi_frequency_adj
+    }
+    fout = fin_temp + "/aoi_feature.npy"
+    print('aoi dict made')
+    np.save(fout, data)
+
+
 def pre_process(fin, fout, is_test=False, thread_num = 20):
     print('Raw input file:' + fin)
     print('Temporary file:' + fout)
@@ -262,7 +324,7 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
     df['expect_finish_time_minute'] = df['time_window_end'].apply(lambda t: time2min(t)[1])
     df = df.sort_values(by=['ds', 'courier_id', 'finish_time_minute'])
     if is_test:
-        df = df[:5000]
+        df = df[:2000]
 
     courier_l = split_trajectory(df)
 
@@ -287,7 +349,6 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
 
     # insert order index
     df.insert(0, 'index', range(1, df.shape[0] + 1))
-
 
     ## get unfinished tasks, (packages)
     print('Get unfinished tasks ...')
@@ -323,13 +384,24 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
         df[col] = df['order_id'].apply(lambda x: result_dict[(x, col)])
 
     df['relative_dis_to_last_package'] = df.apply(lambda r: r['dis_to_last_package'] / r['dis_avg_day'] * 100 if r['dis_avg_day'] !=0 else 0, axis=1)
-    df['geohash'] = [geohash2.encode(lat, lon, 8) for lat, lon in zip(df['lat'], df['lng'])]
+    df['geohash_6'] = [geohash2.encode(lat, lon, 6) for lat, lon in zip(df['lat'], df['lng'])]
+    df['geohash_3'] = [geohash2.encode(lat, lon, 3) for lat, lon in zip(df['lat'], df['lng'])]
+    geo3_dict = {}
+    geo3 = df['geohash_3'].unique()
+    for i in range(len(geo3)):
+        geo3_dict[geo3[i]] = i
+    df['geohash_3'] = df['geohash_3'].map(geo3_dict)
+
+    geo6_dict = {}
+    geo6 = df['geohash_6'].unique()
+    for i in range(len(geo6)):
+        geo6_dict[geo6[i]] = i
+    df['geohash_6'] = df['geohash_6'].map(geo6_dict)
 
     print('Features between adjacent tasks constructed...')
 
     days = sorted(list(set(df['ds'])))
-    df['days'] =  [days.index(d) for d in df['ds']] #
-
+    df['days'] =  [days.index(d) for d in df['ds']]
 
     ##Generate courier's feature
     cou_df_dic = {}
@@ -342,20 +414,10 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
         dir_check(fout)
         df.to_csv(fout+'package_feature.csv', index=False)
         cou_df.to_csv(fout+'courier_feature.csv', index=False)
+        make_aoi_dict(fout)
     print('Data preprocessing is done...')
+
     return df, cou_df
-
-
-if __name__ == "__main__":
-
-    # fin=ws + '/data/raw/collect_烟台市.csv'
-    fin=ws + '/data/raw/pickup/pickup_yt.csv'
-
-    temp_fout=ws + '/data/tmp/pickup_yt_test/'
-    df, cou_df = pre_process(fin=fin,fout=temp_fout, is_test=True, thread_num=20)#
-    print('number of package:', len(df))
-    print('number of couriers:', len(cou_df))
-
 
 
 
