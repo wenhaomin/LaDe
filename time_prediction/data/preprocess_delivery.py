@@ -3,12 +3,19 @@ import numpy as np
 import geohash2
 from geopy.distance import geodesic
 from tqdm import tqdm
-from random import shuffle
 from utils.util import ws, dir_check, write_list_list, dict_merge, multi_thread_work
-import os
+
 def idx(df, col_name):
     _idx_ = list(df.columns).index(col_name)
     return _idx_
+
+def reindex(dic):
+    idx = 0
+    map_dic = {}
+    for k in dic.keys():
+        map_dic[k] = idx
+        idx += 1
+    return map_dic
 
 def time2min(t):
     """
@@ -169,7 +176,6 @@ def courier_info(df):
         feature_dict['speed_avg_order'][c] = feature_dict['dis_sum'][c] / (sum(c_df['time_to_last_package'])) if sum(c_df['time_to_last_package']) != 0 else 5
     return couriers, feature_dict
 
-
 def process_traj_kernel(args ={}):
 
     c_lst = args['c_lst']
@@ -198,6 +204,61 @@ def process_traj_kernel(args ={}):
             result[(o_id, 'dis_to_last_package')] = int(geodesic((last_lat_, last_lon_), (row['lat'], row['lng'])).meters)
     return result
 
+def make_aoi_dict(fin_temp):
+    print('start make aoi dict')
+    df = pd.read_csv(fin_temp + "/package_feature.csv", sep=',', encoding='utf-8')
+    aois = df['aoi_id'].value_counts().to_dict()
+    aoi_dict = reindex(aois)
+    df['aoi_id'] = df['aoi_id'].apply(lambda x: aoi_dict[x])
+
+    courier_l = split_trajectory(df)
+
+    aoi_nums = df["aoi_id"].nunique()
+    aoi_frequency_adj = np.zeros([aoi_nums, aoi_nums])
+    aoi_time_adj = np.zeros([aoi_nums, aoi_nums])
+    aoi_order_num = np.zeros([aoi_nums])
+    aoi_type = np.zeros([aoi_nums])
+    aoi_actime = np.zeros([aoi_nums])
+    aoi_lng = np.zeros([aoi_nums])
+    aoi_lat = np.zeros([aoi_nums])
+    pbar = tqdm(total=len(courier_l))
+
+    for i in range(len(courier_l)):
+        pbar.update(1)
+        for j in range(len(courier_l[i])):
+            aoi = courier_l[i].iloc[j]["aoi_id"]
+            aoi_order_num[aoi] += 1
+            aoi_type[aoi] = courier_l[i].iloc[j]["aoi_type"]
+            aoi_actime[aoi] += courier_l[i].iloc[j]["time_to_last_package"]
+            aoi_lng[aoi] += courier_l[i].iloc[j]["lng"]
+            aoi_lat[aoi] += courier_l[i].iloc[j]["lat"]
+            if j != 0:
+                from_aoi = courier_l[i].iloc[j - 1]["aoi_id"]
+                to_aoi = courier_l[i].iloc[j]["aoi_id"]
+                aoi_frequency_adj[from_aoi][to_aoi] += 1
+                aoi_time_adj[from_aoi][to_aoi] = aoi_time_adj[from_aoi][to_aoi] + courier_l[i].iloc[j][ "time_to_last_package"]
+    aoi_frequency_adj[aoi_frequency_adj == 0] = 1
+    aoi_time_adj = np.divide(aoi_time_adj, aoi_frequency_adj)
+    aoi_actime = np.divide(aoi_actime, aoi_order_num)
+    aoi_lng = np.divide(aoi_lng, aoi_order_num)
+    aoi_lat = np.divide(aoi_lat, aoi_order_num)
+    aoi_feature = np.zeros([aoi_nums, 5])
+    for i in tqdm(range(aoi_nums)):
+        aoi_feature[i][0] = i
+        aoi_feature[i][1] = aoi_type[i]
+        aoi_feature[i][2] = aoi_lng[i]
+        aoi_feature[i][3] = aoi_lat[i]
+        aoi_feature[i][4] = aoi_actime[i]
+
+    data = {
+        "aoi_dict": aoi_dict,
+        "aoi_feature": aoi_feature,
+        "aoi_time_adj": aoi_time_adj,
+        "aoi_frequency_adj": aoi_frequency_adj
+    }
+    fout = fin_temp + "/aoi_feature.npy"
+    print('aoi dict made')
+    np.save(fout, data)
 
 def pre_process(fin, fout, is_test=False, thread_num = 20):
     print('Raw input file:' + fin)
@@ -238,11 +299,9 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
     print('Filter finished...')
 
     # insert order id
-    # df = df.rename(columns={'order_id': 'original_order_id'})
-    # df.insert(0, 'order_id', range(1, df.shape[0] + 1))
+
     df.insert(0, 'index', range(1, df.shape[0] + 1))
 
-    ## get unfinished tasks, (packages)
     print('Get unfinished tasks ...')
     courier_l = split_trajectory(df)
     n =  len(courier_l)
@@ -294,5 +353,6 @@ def pre_process(fin, fout, is_test=False, thread_num = 20):
         dir_check(fout)
         df.to_csv(fout+'package_feature.csv', index=False)
         cou_df.to_csv(fout+'courier_feature.csv', index=False)
+        make_aoi_dict(fout)
     print('Data preprocessing is done...')
     return df, cou_df
