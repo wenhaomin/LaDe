@@ -274,7 +274,7 @@ class PickupDataset(object):
                     aoi_pos += [-1 for _ in range(self.aoi_len - aoi_len)]
                     aoi_eta += [-1 for _ in range(self.aoi_len - aoi_len)]
 
-            aoi_feature_steps[t, :, :] = aoi_fea
+            aoi_feature_steps[t, :, :] = np.array(aoi_fea).reshape(self.aoi_len, self.params['aoi_fea_len'])
             aoi_eta_steps[t, :] = aoi_eta
             aoi_idx_steps[t, :] = aoi_idx
             aoi_len_steps[t] = aoi_len
