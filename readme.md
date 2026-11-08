@@ -49,7 +49,7 @@ Each sub-dataset contains 5 csv files, with each representing the data from a sp
 
 ## 3 Data Description
 Below is the detailed field of each sub-dataset.
-Time Range: 2022-05-01 ~ 2022-10-31
+Time Range: 2022-05-01 ~ 2022-10-31 in CST (UTC+8)
 ### 3.1 LaDe-P
 ![image](./img/datafeild_LaDe-P.png)
 
